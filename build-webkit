@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 import sys
 import os
+import errno
 import subprocess
+import stat
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEBKIT_DIR = os.path.join(SCRIPT_DIR, "WebKit")
+
+def makedirs(path):
+    try:
+        os.makedirs(path)
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise e
 
 def run(*args, **kwargs):
     print("[run] {}".format(" ".join(*args)))
@@ -12,7 +21,38 @@ def run(*args, **kwargs):
     subprocess.run(*args, **kwargs)
 
 def main():
+    if not ("IN_FSVEIL" in os.environ):
+        sys.exit("error: build-webkit must be excuted inside the veil, i.e. './veil ./build-webkit'")
+
     if not os.path.exists(WEBKIT_DIR):
         run(["git", "clone", "https://github.com/WebKit/WebKit", WEBKIT_DIR])
+
+    build_dir = os.path.join(WEBKIT_DIR, "build-gtk")
+    makedirs(build_dir)
+    #zig = os.path.join(SCRIPT_DIR, "tools/bin/zig")
+    #zig = os.path.join(SCRIPT_DIR, "tools/zig-linux-x86_64-0.10.0-dev.2674+d980c6a38/zig")
+    zig = os.path.join(SCRIPT_DIR, "tools/zig-linux-x86_64-0.10.0/zig")
+    zigcc = os.path.join(build_dir, "zigcc")
+    with open(zigcc, "w") as f:
+        f.write('#!/usr/bin/env sh\n')
+        f.write(f'exec {zig} cc "$@"\n')
+    os.chmod(zigcc, os.stat(zigcc).st_mode | stat.S_IEXEC)
+    zigcxx = os.path.join(build_dir, "zigcxx")
+    with open(zigcxx, "w") as f:
+        f.write('#!/usr/bin/env sh\n')
+        f.write(f'exec {zig} c++ "$@"\n')
+    os.chmod(zigcxx, os.stat(zigcxx).st_mode | stat.S_IEXEC)
+    run([
+        "cmake",
+        "-DPORT=GTK",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+        f"-DCMAKE_MAKE_PROGRAM={os.path.join(SCRIPT_DIR, 'tools/bin/ninja')}",
+        f"-DCMAKE_C_COMPILER={zigcc}",
+        f"-DCMAKE_CXX_COMPILER={zigcxx}",
+        "-GNinja",
+        "--debug-trycompile",
+        "..",
+    ], cwd=build_dir)
+
 
 main()

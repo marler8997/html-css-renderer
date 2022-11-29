@@ -16,4 +16,20 @@ pub fn build(b: *std.build.Builder) void {
         exe.setBuildMode(mode);
         exe.install();
     }
+
+    const build_tools = b.step("buildtools", "build/install the build tools");
+    {
+        const exe = b.addExecutable("fsveil", "fsveil.zig");
+        exe.setTarget(target);
+        exe.setBuildMode(mode);
+        exe.install();
+        build_tools.dependOn(&exe.install_step.?.step);
+    }
+    {
+        const exe = b.addExecutable("which", "which.zig");
+        exe.setTarget(target);
+        exe.setBuildMode(mode);
+        exe.install();
+        build_tools.dependOn(&exe.install_step.?.step);
+    }
 }
