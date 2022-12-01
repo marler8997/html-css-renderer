@@ -7,3 +7,4 @@ __pycache__/
 /WebKit/
 /cairo-*/
 /src/htmlidmaps.zig
+/html-css-renderer.html

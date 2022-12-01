@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<title>html-css-renderer</title>
+<style>
+* { margin: 0; padding: 0 }
+canvas { background: #000 }
+</style>
+<script>
+const wasm_base64 = "<@INSERT_WASM_HERE@>";
+var global_wasm = undefined;
+var global_current_log = "";
+var global_canvas_dom = undefined;
+var global_canvas = undefined;
+const wasm_env = {
+    logWrite: function(ptr, len) {
+        global_current_log += readStr(global_wasm.memory.buffer, ptr, len);
+    },
+    logFlush: function() {
+        console.log(global_current_log);
+        global_current_log = "";
+    },
+    initCanvas: function(width, height) {
+        global_canvas_dom = document.getElementById("Canvas");
+        global_canvas_dom.width = width;
+        global_canvas_dom.height = height;
+        global_canvas = global_canvas_dom.getContext("2d");
+        document.getElementById("RendersDiv").style.display = "block";
+    },
+    canvasClear: function() {
+        global_canvas.fillStyle = "white";
+        global_canvas.fillRect(0, 0, global_canvas_dom.width, global_canvas_dom.height);
+    },
+    drawText: function(x, y, text_ptr, text_len) {
+        const text = readStr(global_wasm.memory.buffer, text_ptr, text_len);
+        console.log("drawText " + x + ", " + y + " '" + text + "'");
+        global_canvas.fillStyle = "black";
+        global_canvas.fillText(text, x, y);
+    },
+};
+WebAssembly.instantiate(
+    Uint8Array.from(atob(wasm_base64), c => c.charCodeAt(0)).buffer,
+    { env: wasm_env }
+).then(wasm => {
+    global_wasm = wasm.instance.exports;
+});
+function readStr(buffer, ptr, len) {
+    const array = new Uint8Array(buffer, ptr, len);
+    const decoder = new TextDecoder();
+    return decoder.decode(array);
+}
+function encodeStr(str) {
+    const encoder = new TextEncoder();
+    return encoder.encode(str);
+}
+function writeEncodedStr(buffer, ptr, encoded_str) {
+    const dest = new Uint8Array(buffer, ptr, encoded_str.length);
+    for (let i = 0; i < encoded_str.length; i++) {
+        dest[i] = encoded_str[i];
+    }
+}
+
+function fatal(msg) {
+    console.log("fatal: " + msg);
+    alert(msg);
+}
+
+function allocStr(str) {
+    const encoded = encodeStr(str);
+    const ptr = global_wasm.alloc(encoded.length);
+    if (ptr == 0) {
+        fatal("WASM is out of memory");
+        return { ptr: 0, len: 0 };
+    }
+    writeEncodedStr(global_wasm.memory.buffer, ptr, encoded);
+    return { ptr: ptr, len: encoded.length };
+}
+
+function loadHtml(name, html) {
+    const name_obj = allocStr(name);
+    if (name_obj.length == 0) {
+        fatal("WASM is out of memory");
+        return;
+    }
+    const html_obj = allocStr(html);
+    if (html_obj.length == 0) {
+        fatal("WASM is out of memory");
+    } else {
+        const iframe = document.getElementById("Iframe");
+        iframe.srcdoc = html;
+        global_wasm.loadHtml(
+            name_obj.ptr, name_obj.len,
+            html_obj.ptr, html_obj.len);
+        global_wasm.release(html_obj.ptr, html_obj.len);
+    }
+    global_wasm.release(name_obj.ptr, name_obj.len);
+}
+
+function submitUrl() {
+    console.log("todo submitUrl");
+}
+function submitText() {
+    let node = document.getElementById("TextInput");
+    if (node.value.length > 0) {
+        loadHtml("[text-supplied-by-user]", node.value);
+    }
+}
+</script>
+</head><body>
+
+<form action="#" onsubmit="submitUrl()">
+  URL: <input id="UrlInput" type="text">
+  <input type="submit">
+</form>
+<form action="#" onsubmit="submitText()">
+  Text: <textarea id="TextInput" rows="5" cols="40"></textarea>
+  <input type="submit">
+</form>
+<br><hr><br>
+
+<div id="RendersDiv" style="display:none">
+  <div id="RendererDiv">
+      <h1>Custom Renderer</h1>
+      <canvas id="Canvas" style="border:1px solid #000"></canvas>
+  </div>
+  <div id="IframeDiv">
+      <h1>Native Iframe</h1>
+      <iframe id="Iframe"></iframe>
+  </div>
+</div>
+
+</body></html>

@@ -94,6 +94,16 @@ pub fn defaultDisplayIsBlock(id: TagId) bool {
     };
 }
 
+/// An element that can never have content
+pub fn isVoidElement(id: TagId) bool {
+    return switch (id) {
+        .area, .base, .br, .col, .command, .embed, .hr, .img, .input,
+        .keygen, .link, .meta, .param, .source, .track, .wbr,
+        => true,
+        else => false,
+    };
+}
+
 fn lookupTagIgnoreCase(name: []const u8) ?TagId {
     // need enough room for the max tag name
     var buf: [20]u8 = undefined;

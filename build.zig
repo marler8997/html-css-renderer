@@ -53,6 +53,19 @@ pub fn build(b: *std.build.Builder) void {
         const install = b.addInstallArtifact(exe);
         b.step("x11", "build/install the x11renderer").dependOn(&install.step);
     }
+
+    {
+        const exe = b.addSharedLibrary("wasmrenderer", "src/wasmrenderer.zig", .unversioned);
+        exe.setBuildMode(mode);
+        exe.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+
+        const make_exe = b.addExecutable("make-renderer-webpage", "src/make-renderer-webpage.zig");
+        const run = make_exe.run();
+        run.addArtifactArg(exe);
+        run.addFileSourceArg(.{ .path = "src/renderer.template.html"});
+        run.addArg(b.pathJoin(&.{ b.build_root, "html-css-renderer.html" }));
+        b.step("wasm", "build the wasm-based renderer").dependOn(&run.step);
+    }
 }
 
 fn allocIdMapSource(allocator: std.mem.Allocator) []const u8 {
