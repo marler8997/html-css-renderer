@@ -83,6 +83,17 @@ pub const Element = struct {
     node: Node,
 };
 
+pub fn defaultDisplayIsBlock(id: TagId) bool {
+    return switch (id) {
+        .address, .article, .aside, .blockquote, .canvas, .dd, .div,
+        .dl, .dt, .fieldset, .figcaption, .figure, .footer, .form,
+        .h1, .h2, .h3, .h4, .h5, .h6, .header, .hr, .li, .main, .nav,
+        .noscript, .ol, .p, .pre, .section, .table, .tfoot, .ul, .video,
+        => true,
+        else => false,
+    };
+}
+
 fn lookupTagIgnoreCase(name: []const u8) ?TagId {
     // need enough room for the max tag name
     var buf: [20]u8 = undefined;
@@ -191,6 +202,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                             state = .{ .in_tag = .{ .start_node_index = nodes.items.len - 1 } };
                         }
                     },
+                    .char => |span| state = .{ .data = span },
                     else => std.debug.panic("todo handle token {}", .{token})
                 }
             },

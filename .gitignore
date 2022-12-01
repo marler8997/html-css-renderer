@@ -1,6 +1,7 @@
 zig-cache/
 zig-out/
 __pycache__/
+/dep/
 /downloads/
 /tools/
 /WebKit/

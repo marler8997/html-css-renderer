@@ -1,7 +1,20 @@
 const std = @import("std");
+const GitRepoStep = @import("GitRepoStep.zig");
 const htmlid = @import("src/htmlid.zig");
 
 pub fn build(b: *std.build.Builder) void {
+    const build_tools = b.step("buildtools", "build/install the build tools");
+    {
+        const exe = b.addExecutable("fsveil", "fsveil.zig");
+        const install = b.addInstallArtifact(exe);
+        build_tools.dependOn(&install.step);
+    }
+    {
+        const exe = b.addExecutable("which", "which.zig");
+        const install = b.addInstallArtifact(exe);
+        build_tools.dependOn(&install.step);
+    }
+
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
@@ -24,20 +37,21 @@ pub fn build(b: *std.build.Builder) void {
         exe.install();
     }
 
-    const build_tools = b.step("buildtools", "build/install the build tools");
+    const zigx_repo = GitRepoStep.create(b, .{
+        .url = "https://github.com/marler8997/zigx",
+        .branch = null,
+        .sha = "28096f1ef60bbf688adf83b9593587c3f155f57b",
+        .fetch_enabled = true,
+    });
     {
-        const exe = b.addExecutable("fsveil", "fsveil.zig");
+        const exe = b.addExecutable("x11renderer", "src/x11renderer.zig");
+        exe.step.dependOn(&gen_id_maps.step);
+        exe.step.dependOn(&zigx_repo.step);
+        exe.addPackagePath("x11", b.pathJoin(&.{ zigx_repo.path, "x.zig" }));
         exe.setTarget(target);
         exe.setBuildMode(mode);
         const install = b.addInstallArtifact(exe);
-        build_tools.dependOn(&install.step);
-    }
-    {
-        const exe = b.addExecutable("which", "which.zig");
-        exe.setTarget(target);
-        exe.setBuildMode(mode);
-        const install = b.addInstallArtifact(exe);
-        build_tools.dependOn(&install.step);
+        b.step("x11", "build/install the x11renderer").dependOn(&install.step);
     }
 }
 
