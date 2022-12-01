@@ -1,5 +1,7 @@
 zig-cache/
 zig-out/
+__pycache__/
 /downloads/
 /tools/
 /WebKit/
+/cairo-*/

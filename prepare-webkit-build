@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import sys
+import os
+import errno
+import shutil
+import subprocess
+
+import webkitconfig
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DOWNLOADS_DIR = os.path.join(SCRIPT_DIR, "downloads")
+
+def remove(path):
+    try:
+        os.remove(path)
+    except OSError as e:
+        if e.errno != errno.ENOENT:
+            raise e
+
+def makedirs(path):
+    try:
+        os.makedirs(path)
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise e
+
+def rmtree(path):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+
+def run(*args, **kwargs):
+    print("[run] {}".format(" ".join(*args)))
+    kwargs["check"] = True
+    subprocess.run(*args, **kwargs)
+
+def download(url, filename):
+    makedirs(os.path.dirname(filename))
+    tmp_filename = filename + ".downloading"
+    remove(tmp_filename)
+    if shutil.which("wget"):
+        run(["wget", url, "--output-document", tmp_filename])
+    else:
+        run(["curl", url, "--output", tmp_filename])
+    os.rename(tmp_filename, filename)
+
+def fetch_cairo():
+    namever = f"cairo-{webkitconfig.CAIRO_VERSION}"
+    
+    src = os.path.join(SCRIPT_DIR, namever)
+    if os.path.exists(src):
+        return
+
+    archive_basename = f"{namever}.tar.xz"
+    archive_file = os.path.join(DOWNLOADS_DIR, archive_basename)
+    if not os.path.exists(archive_file):
+        download(f"https://www.cairographics.org/releases/{archive_basename}", archive_file)
+
+    #makedirs(src)
+    extracting = os.path.join(SCRIPT_DIR, "extracting")
+    rmtree(extracting)
+    makedirs(extracting)
+    run(["tar", "-C", extracting, "-xf", archive_file])
+    os.rename(extracting + f"/{namever}", src)
+    rmtree(extracting)
+
+def main():
+    fetch_cairo()
+
+main()

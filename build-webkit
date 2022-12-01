@@ -2,8 +2,11 @@
 import sys
 import os
 import errno
+import shutil
 import subprocess
 import stat
+
+import webkitconfig
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEBKIT_DIR = os.path.join(SCRIPT_DIR, "WebKit")
@@ -20,6 +23,13 @@ def run(*args, **kwargs):
     kwargs["check"] = True
     subprocess.run(*args, **kwargs)
 
+def build_cairo(zigcc, zigcxx):
+    namever = f"cairo-{webkitconfig.CAIRO_VERSION}"
+    src = os.path.join(SCRIPT_DIR, namever)
+    if not os.path.exists(src):
+        sys.exit(f"error: missing cairo src '{src}', have you run prepare-webkit-build?")
+    run(["./configure", "CC=" + zigcc, "CXX=" + zigcxx], cwd=src)
+
 def main():
     if not ("IN_FSVEIL" in os.environ):
         sys.exit("error: build-webkit must be excuted inside the veil, i.e. './veil ./build-webkit'")
@@ -33,15 +43,20 @@ def main():
     #zig = os.path.join(SCRIPT_DIR, "tools/zig-linux-x86_64-0.10.0-dev.2674+d980c6a38/zig")
     zig = os.path.join(SCRIPT_DIR, "tools/zig-linux-x86_64-0.10.0/zig")
     zigcc = os.path.join(build_dir, "zigcc")
+    abi = "gnu"
+    #abi = "musl"
     with open(zigcc, "w") as f:
         f.write('#!/usr/bin/env sh\n')
-        f.write(f'exec {zig} cc "$@"\n')
+        f.write(f'exec {zig} cc --target=x86_64-linux-{abi} "$@"\n')
     os.chmod(zigcc, os.stat(zigcc).st_mode | stat.S_IEXEC)
     zigcxx = os.path.join(build_dir, "zigcxx")
     with open(zigcxx, "w") as f:
         f.write('#!/usr/bin/env sh\n')
-        f.write(f'exec {zig} c++ "$@"\n')
+        f.write(f'exec {zig} c++ --target=x86_64-linux-{abi} "$@"\n')
     os.chmod(zigcxx, os.stat(zigcxx).st_mode | stat.S_IEXEC)
+
+    build_cairo(zigcc, zigcxx)
+
     run([
         "cmake",
         "-DPORT=GTK",
@@ -50,7 +65,7 @@ def main():
         f"-DCMAKE_C_COMPILER={zigcc}",
         f"-DCMAKE_CXX_COMPILER={zigcxx}",
         "-GNinja",
-        "--debug-trycompile",
+        #"--debug-trycompile",
         "..",
     ], cwd=build_dir)
 
