@@ -43,7 +43,7 @@ pub const GetRootNodeOptions = struct {
     composed: bool = false,
 };
 
-pub const Node = struct {
+pub const NodeInterface = struct {
     pub const ELEMENT_NODE = 1;
     pub const ATTRIBUTE_NODE = 2;
     pub const TEXT_NODE = 3;
@@ -102,7 +102,7 @@ fn lookupAttrIgnoreCase(name: []const u8) ?AttrId {
     return htmlidmaps.attr_id_map.get(buf[0 .. name.len]);
 }
 
-pub const DomNode = union(enum) {
+pub const Node = union(enum) {
     tag: struct {
         id: TagId,
         self_closing: bool,
@@ -139,7 +139,7 @@ fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
     return tokenizer.next();
 }
 
-pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) ![]DomNode {
+pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) ![]Node {
     var state: union(enum) {
         default: void,
         data: Tokenizer.Span,
@@ -151,7 +151,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         },
     } = .default;
 
-    var nodes = std.ArrayListUnmanaged(DomNode){ };
+    var nodes = std.ArrayListUnmanaged(Node){ };
     errdefer nodes.deinit(allocator);
 
     var tokenizer = Tokenizer.init(content);
