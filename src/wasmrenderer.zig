@@ -28,6 +28,10 @@ export fn release(ptr: [*]u8, len: usize) void {
     buf.unref(gpa.allocator(), len);
 }
 
+export fn onResize(width: usize, height: usize) void {
+    std.log.info("todo: resize {} x {}", .{width, height});
+}
+
 export fn loadHtml(name_ptr: [*]u8, name_len: usize, html_ptr: [*]u8, html_len: usize) void {
     const name = name_ptr[0 .. name_len];
     const html_buf = Refcounted{ .data_ptr = html_ptr };

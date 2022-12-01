@@ -3,7 +3,30 @@
 <title>html-css-renderer</title>
 <style>
 * { margin: 0; padding: 0 }
-canvas { background: #000 }
+html {height: 100%}
+body {
+  min-height: 100%;
+  display: flex;
+  flex-flow: column;
+}
+#RendersDiv {
+  flex-grow: 1;
+
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.RenderWithTitleDiv {
+  display:flex;
+  flex-flow: column;
+}
+.RenderWrapperDiv {
+  flex-grow: 1;
+  border-top: 1px solid black;
+}
+#CanvasWrapper {
+  border-right: 1px solid black;
+}
+iframe{ border: 0 }
 </style>
 <script>
 const wasm_base64 = "<@INSERT_WASM_HERE@>";
@@ -19,12 +42,10 @@ const wasm_env = {
         console.log(global_current_log);
         global_current_log = "";
     },
-    initCanvas: function(width, height) {
+    initCanvas: function() {
         global_canvas_dom = document.getElementById("Canvas");
-        global_canvas_dom.width = width;
-        global_canvas_dom.height = height;
         global_canvas = global_canvas_dom.getContext("2d");
-        document.getElementById("RendersDiv").style.display = "block";
+        updateRenderSizes();
     },
     canvasClear: function() {
         global_canvas.fillStyle = "white";
@@ -104,27 +125,56 @@ function submitText() {
         loadHtml("[text-supplied-by-user]", node.value);
     }
 }
+
+function updateRenderSizes() {
+    const container = document.getElementById("RendersDiv");
+    const width = Math.trunc(Math.floor(container.offsetWidth / 2) - 1);
+
+    const canvas_wrapper = document.getElementById("CanvasWrapper");
+    canvas_wrapper.style.width = width + "px";
+    const height = Math.trunc(canvas_wrapper.offsetHeight);
+
+    const c = document.getElementById("Canvas");
+    c.width = width;
+    c.height = height;
+    if (global_canvas != undefined) {
+        global_wasm.onResize(width, height);
+    }
+
+    const iframe = document.getElementById("Iframe");
+    iframe.width = width;
+    iframe.height = height;
+}
+function onWindowResize() {
+    updateRenderSizes();
+}
+window.addEventListener('resize', onWindowResize);
+
 </script>
 </head><body>
 
-<form action="#" onsubmit="submitUrl()">
-  URL: <input id="UrlInput" type="text">
-  <input type="submit">
-</form>
-<form action="#" onsubmit="submitText()">
-  Text: <textarea id="TextInput" rows="5" cols="40"></textarea>
-  <input type="submit">
-</form>
-<br><hr><br>
-
-<div id="RendersDiv" style="display:none">
-  <div id="RendererDiv">
+<div>
+  <form action="#" onsubmit="submitUrl()">
+    URL: <input id="UrlInput" type="text">
+    <input type="submit">
+  </form>
+  <form action="#" onsubmit="submitText()">
+    Text: <textarea id="TextInput" rows="5" cols="40"></textarea>
+    <input type="submit">
+  </form>
+</div>
+<div id="RendersDiv">
+  <div class="RenderWithTitleDiv">
       <h1>Custom Renderer</h1>
-      <canvas id="Canvas" style="border:1px solid #000"></canvas>
+      <div id="CanvasWrapper" class="RenderWrapperDiv">
+          <canvas id="Canvas"></canvas>
+      </div>
   </div>
-  <div id="IframeDiv">
+  <div class="RenderWithTitleDiv">
       <h1>Native Iframe</h1>
-      <iframe id="Iframe"></iframe>
+      <div id="IframeWrapper" class="RenderWrapperDiv">
+          <iframe id="Iframe"></iframe>
+      </div>
   </div>
 </div>
 
