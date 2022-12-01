@@ -141,8 +141,6 @@ fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
 
 pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) ![]DomNode {
     var state: union(enum) {
-        start: void,
-        in_doctype: void,
         default: void,
         data: Tokenizer.Span,
         in_tag: struct {
@@ -151,7 +149,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         in_svg: struct {
             start_node_index: usize,
         },
-    } = .start;
+    } = .default;
 
     var nodes = std.ArrayListUnmanaged(DomNode){ };
     errdefer nodes.deinit(allocator);
@@ -159,32 +157,25 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
     var tokenizer = Tokenizer.init(content);
     var saved_token: ?Token = null;
 
+    // check for doctype first
+    {
+        const token = (try tokenizer.next()) orelse return nodes.toOwnedSlice(allocator);
+        switch (token) {
+            .doctype => |d| {
+                const name = if (d.name_raw) |n| n.slice(content) else
+                    return opt.reportError("got doctype with no name", .{});
+                if (!std.ascii.eqlIgnoreCase(name, "html"))
+                    return opt.reportError("expected doctype 'html' but got '{}'", .{std.zig.fmtEscapes(name)});
+            },
+            else => {
+                saved_token = token;
+            },
+        }
+    }
+
     parse_loop:
     while (true) {
         switch (state) {
-            .start => {
-                const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
-                switch (token) {
-                    .doctype => |d| {
-                        const name = if (d.name_raw) |n| n.slice(content) else
-                            return opt.reportError("got doctype with no name", .{});
-                        if (!std.ascii.eqlIgnoreCase(name, "html"))
-                            return opt.reportError("expected doctype 'html' but got '{}'", .{std.zig.fmtEscapes(name)});
-                        state = .default;
-                    },
-                    else => std.debug.panic("todo handle token {}", .{token})
-                }
-            },
-            .in_doctype => {
-                const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
-                switch (token) {
-                    .start_tag => {
-                        saved_token = token;
-                        state = .default;
-                    },
-                    else => std.debug.panic("todo handle token {} where state=in_doctype", .{token}),
-                }
-            },
             .default => {
                 const token = (try next(&tokenizer, &saved_token)) orelse break :parse_loop;
                 switch (token) {
