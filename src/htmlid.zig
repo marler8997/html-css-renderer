@@ -13,7 +13,7 @@ pub const TagId = enum {
     u, ul, @"var", video, wbr,
 };
 pub const AttrId = enum {
-    accept, @"accept-charset", accesskey, action, @"align", alt, @"async", autocomplete, autofocus, autoplay,
+    accept, @"accept-charset", accesskey, action, @"align", alt, as, @"async", autocomplete, autofocus, autoplay,
     bgcolor, border, charset, checked, cite, class, color, cols, colspan, content, contenteditable, controls, coords,
     data, datetime, default, @"defer", dir, dirname, disabled, download, draggable,
     enctype, @"for", form, formaction, headers, height, hidden, high, href, hreflang, @"http-equiv",

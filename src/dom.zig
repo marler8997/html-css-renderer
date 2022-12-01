@@ -146,6 +146,9 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         in_tag: struct {
             start_node_index: usize,
         },
+        in_svg: struct {
+            start_node_index: usize,
+        },
     } = .start;
 
     var nodes = std.ArrayListUnmanaged(DomNode){ };
@@ -188,7 +191,11 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                             return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
                         //std.log.info("DEBUG: start <{s}>", .{@tagName(id)});
                         try nodes.append(allocator, .{ .tag = .{ .id = id, .self_closing = false } });
-                        state = .{ .in_tag = .{ .start_node_index = nodes.items.len - 1 } };
+                        if (id == .svg) {
+                            state = .{ .in_svg = .{ .start_node_index = nodes.items.len - 1} };
+                        } else {
+                            state = .{ .in_tag = .{ .start_node_index = nodes.items.len - 1 } };
+                        }
                     },
                     else => std.debug.panic("todo handle token {}", .{token})
                 }
@@ -204,8 +211,11 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                     .attr => |t| {
                         const name_raw = t.name_raw.slice(content);
                         //std.log.info("DEBUG: attr name_raw is '{s}'", .{name_raw});
-                        const id = lookupAttrIgnoreCase(name_raw) orelse
+                        const id = lookupAttrIgnoreCase(name_raw) orelse {
+                            if (std.ascii.startsWithIgnoreCase(name_raw, "data-"))
+                                return opt.reportError("custom attribute '{s}' not supported", .{name_raw});
                             return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(name_raw)});
+                        };
                         // TODO: also process value
                         try nodes.append(allocator, .{ .attr = .{ .id = id, .value = 0 } });
                     },
@@ -214,6 +224,10 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                     },
                     else => std.debug.panic("todo handle token {}", .{token})
                 }
+            },
+            .in_svg => |tag_state| {
+                _ = tag_state;
+                std.debug.panic("todo: handle svg", .{});
             },
         }
     }
