@@ -75,8 +75,8 @@ pub fn main() !u8 {
                     const value = if (a.value_raw) |v| v.slice(content) else "<none>";
                     std.log.info("    Attr: name={s} value='{s}'", .{a.name_raw.slice(content), value});
                 },
-                .start_tag_end => |self_close| {
-                    std.log.info("StartTagEnd: self_close={}", .{self_close});
+                .start_tag_self_closed =>  {
+                    std.log.info("StartTagSelfClosed", .{});
                 },
                 .char => |c| {
                     var s: [10]u8 = undefined;

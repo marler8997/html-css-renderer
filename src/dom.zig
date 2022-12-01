@@ -2,6 +2,13 @@
 const std = @import("std");
 
 const Tokenizer = @import("Tokenizer.zig");
+const Token = Tokenizer.Token;
+
+const htmlid = @import("htmlid.zig");
+const TagId = htmlid.TagId;
+const AttrId = htmlid.AttrId;
+
+const htmlidmaps = @import("htmlidmaps.zig");
 
 pub const EventTarget = struct {
 
@@ -9,7 +16,7 @@ pub const EventTarget = struct {
     // addEventListener
     // removeEventListener
     // dispatchEvent
-    
+
 };
 
 pub const EventListener = struct {
@@ -60,12 +67,12 @@ pub const Node = struct {
 //    parentElement: ?Element,
 
     //pub fn nodeType(node: Node) u16 { ... }
-    
+
 //    fn getRootNode(options: GetRootNodeOptions) Node {
 //        _ = options;
 //        @panic("todo");
 //    }
-    
+
 };
 
 pub const Document = struct {
@@ -74,6 +81,36 @@ pub const Document = struct {
 
 pub const Element = struct {
     node: Node,
+};
+
+fn lookupTagIgnoreCase(name: []const u8) ?TagId {
+    // need enough room for the max tag name
+    var buf: [20]u8 = undefined;
+    if (name.len > buf.len) return null;
+    for (name) |c, i| {
+        buf[i] = std.ascii.toLower(c);
+    }
+    return htmlidmaps.tag_id_map.get(buf[0 .. name.len]);
+}
+fn lookupAttrIgnoreCase(name: []const u8) ?AttrId {
+    // need enough room for the max attr name
+    var buf: [20]u8 = undefined;
+    if (name.len > buf.len) return null;
+    for (name) |c, i| {
+        buf[i] = std.ascii.toLower(c);
+    }
+    return htmlidmaps.attr_id_map.get(buf[0 .. name.len]);
+}
+
+pub const DomNode = union(enum) {
+    tag: struct {
+        id: TagId,
+        self_closing: bool,
+    },
+    attr: struct {
+        id: AttrId,
+        value: u32,
+    },
 };
 
 const ParseOptions = struct {
@@ -92,7 +129,7 @@ const ParseOptions = struct {
     }
 };
 
-fn next(tokenizer: *Tokenizer, saved_token: *?Tokenizer.Token) !?Tokenizer.Token {
+fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
     if (saved_token.*) |t| {
         // TODO: is t still valid if we set this to null here?
         saved_token.* = null;
@@ -101,17 +138,21 @@ fn next(tokenizer: *Tokenizer, saved_token: *?Tokenizer.Token) !?Tokenizer.Token
     return tokenizer.next();
 }
 
-pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) !Document {
-    _ = allocator;
-
-    var state: enum {
-        start,
-        got_doctype,
+pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) ![]DomNode {
+    var state: union(enum) {
+        start: void,
+        in_doctype: void,
+        default: void,
+        in_tag: struct {
+            start_node_index: usize,
+        },
     } = .start;
 
-    //var got_doctype = false;
+    var nodes = std.ArrayListUnmanaged(DomNode){ };
+    errdefer nodes.deinit(allocator);
+
     var tokenizer = Tokenizer.init(content);
-    var saved_token: ?Tokenizer.Token = null;
+    var saved_token: ?Token = null;
 
     while (true) {
         switch (state) {
@@ -119,53 +160,62 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                 const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
                 switch (token) {
                     .doctype => |d| {
-                        //if (got_doctype)
-                        //    return opt.reportError("got multiple doctypes", .{});
-                        //got_doctype = true;
                         const name = if (d.name_raw) |n| n.slice(content) else
                             return opt.reportError("got doctype with no name", .{});
                         if (!std.ascii.eqlIgnoreCase(name, "html"))
-                            return opt.reportError("expected doctype 'html' but got '{s}'", .{name});
-                        state = .got_doctype;
+                            return opt.reportError("expected doctype 'html' but got '{}'", .{std.zig.fmtEscapes(name)});
+                        state = .default;
                     },
                     else => std.debug.panic("todo handle token {}", .{token})
                 }
             },
-            .got_doctype => {
+            .in_doctype => {
+                const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
+                switch (token) {
+                    .start_tag => {
+                        saved_token = token;
+                        state = .default;
+                    },
+                    else => std.debug.panic("todo handle token {} where state=in_doctype", .{token}),
+                }
+            },
+            .default => {
                 const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
                 switch (token) {
                     .start_tag => |t| {
-                        std.debug.panic("handle start tag {}", .{t});
+                        const name_raw = t.name_raw.slice(content);
+                        const id = lookupTagIgnoreCase(name_raw) orelse
+                            return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
+                        //std.log.info("DEBUG: start <{s}>", .{@tagName(id)});
+                        try nodes.append(allocator, .{ .tag = .{ .id = id, .self_closing = false } });
+                        state = .{ .in_tag = .{ .start_node_index = nodes.items.len - 1 } };
+                    },
+                    else => std.debug.panic("todo handle token {}", .{token})
+                }
+            },
+            .in_tag => |tag_state| {
+                const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
+                switch (token) {
+                    .start_tag => {
+                        //std.log.info("DEBUG: append <{s}>", .{@tagName(tag_state.id)});
+                        saved_token = token;
+                        state = .default;
+                    },
+                    .attr => |t| {
+                        const name_raw = t.name_raw.slice(content);
+                        //std.log.info("DEBUG: attr name_raw is '{s}'", .{name_raw});
+                        const id = lookupAttrIgnoreCase(name_raw) orelse
+                            return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(name_raw)});
+                        // TODO: also process value
+                        try nodes.append(allocator, .{ .attr = .{ .id = id, .value = 0 } });
+                    },
+                    .start_tag_self_closed => {
+                        nodes.items[tag_state.start_node_index].tag.self_closing = true;
                     },
                     else => std.debug.panic("todo handle token {}", .{token})
                 }
             },
         }
     }
-//    
-//    while (try tokenizer.next()) |token| {
-//        switch (state) {
-//            .initial => switch (token) {
-//                .start_tag => |t| {
-//                    std.log.info("StartTag: name={s}", .{t.name_raw.slice(content)});
-//                },
-//                .attr => |a| {
-//                    const value = if (a.value_raw) |v| v.slice(content) else "<none>";
-//                    std.log.info("    Attr: name={s} value='{s}'", .{a.name_raw.slice(content), value});
-//                },
-//                .start_tag_end => |self_close| {
-//                    std.log.info("StartTagEnd: self_close={}", .{self_close});
-//                },
-//                .char => |c| {
-//                    var s: [10]u8 = undefined;
-//                    const len = std.unicode.utf8Encode(c, &s) catch unreachable;
-//                    std.log.info("Char: '{}'", .{std.zig.fmtEscapes(s[0 .. len])});
-//                },
-//                else => |t| {
-//                    std.log.info("{}", .{t});
-//                },
-//            },
-//        }
-//    }
-//    return error.NotImpl;
+    return nodes.toOwnedSlice(allocator);
 }

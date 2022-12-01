@@ -5,3 +5,4 @@ __pycache__/
 /tools/
 /WebKit/
 /cairo-*/
+/src/htmlidmaps.zig

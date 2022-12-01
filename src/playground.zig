@@ -66,11 +66,14 @@ pub fn main() !u8 {
     };
 
     var parse_context = ParseContext{ .filename = filename };
-    const doc = try dom.parse(arena.allocator(), content, .{
+    const nodes = dom.parse(arena.allocator(), content, .{
         .context = &parse_context,
         .on_error = onParseError,
-    });
-    _ = doc;
+    }) catch |err| switch (err) {
+        error.ReportedParseError => return 0xff,
+        else => |e| return e,
+    };
+    _ = nodes;
     
     return 0;
 }

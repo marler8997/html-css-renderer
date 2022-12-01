@@ -27,7 +27,7 @@ pub fn init(slice: []const u8) Tokenizer {
     };
 }
 
-const Span = struct {
+pub const Span = struct {
     start: usize,
     limit: usize,
     pub fn slice(self: Span, text: []const u8) []const u8 {
@@ -39,7 +39,7 @@ pub const Token = union(enum) {
     doctype: Doctype,
     // TODO: maybe combine start/end tag?
     start_tag: StartTag,
-    start_tag_end: bool,
+    start_tag_self_closed: void,
     end_tag: struct {
         name: usize,
         self_closing: bool,
@@ -288,7 +288,7 @@ fn next2(self: *Tokenizer) !?struct {
                 } else switch (self.current_input_character.val) {
                     '>' => {
                         self.state = .data;
-                        return .{ .token = .{ .start_tag_end = true } };
+                        return .{ .token = .start_tag_self_closed };
                     },
                     else => {
                         self.state = .before_attribute_name;
@@ -413,7 +413,6 @@ fn next2(self: *Tokenizer) !?struct {
                     '\t', '\n', form_feed, ' ' => self.state = .before_attribute_name,
                     '>' => {
                         self.state = .data;
-                        return .{ .token = .{ .start_tag_end = false }};
                     },
                     '/' => self.state = .self_closing_start_tag,
                     else => |c| std.debug.panic("todo c={}", .{c}),
