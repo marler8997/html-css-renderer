@@ -18,7 +18,7 @@ pub const AttrId = enum {
     data, datetime, default, @"defer", dir, dirname, disabled, download, draggable,
     enctype, @"for", form, formaction, headers, height, hidden, high, href, hreflang, @"http-equiv",
     id, ismap, kind, label, lang, list, loop, low, max, maxlength, media, method, min, multiple, muted,
-    name, novalidate, onabort, onafterprint, onbeforeprint, onbeforeunload, onblur, oncanplay,
+    name, nomodule, novalidate, onabort, onafterprint, onbeforeprint, onbeforeunload, onblur, oncanplay,
     oncanplaythrough, onchange, onclick, oncontextmenu, oncopy, oncuechange, oncut, ondblclick,
     ondrag, ondragend, ondragenter, ondragleave, ondragover, ondragstart, ondrop, ondurationchange,
     onemptied, onended, onerror, onfocus, onhashchange, oninput, oninvalid, onkeydown, onkeypress,

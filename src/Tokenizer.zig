@@ -57,7 +57,7 @@ pub const Token = union(enum) {
     //       there's no reason for the tokenizer not to return all consecutive
     //       char tokens as a single string
     // chars: Span,
-    char: u21,
+    char: Span,
     parse_error: enum {
         unexpected_null_character,
         invalid_first_character_of_tag_name,
@@ -93,8 +93,8 @@ pub const Token = union(enum) {
 
 const State = union(enum) {
     data: void,
-    tag_open: void,
-    end_tag_open: void,
+    tag_open: usize,
+    end_tag_open: usize,
     character_reference: void,
     markup_declaration_open: void,
     doctype: void,
@@ -178,28 +178,44 @@ fn next2(self: *Tokenizer) !?struct {
                         //return_state = .data;
                         //self.state = .character_reference;
                     },
-                    '<' => self.state = .tag_open,
+                    '<' => self.state = .{
+                        .tag_open = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                    },
                     0 => {
+                        const limit = @ptrToInt(self.ptr) - @ptrToInt(self.start);
                         return .{
                             .token = .{ .parse_error = .unexpected_null_character },
-                            .deferred = .{ .char = 0 },
+                            .deferred = .{ .char = .{
+                                .start = limit - self.current_input_character.len,
+                                .limit = limit,
+                            }},
                         };
                     },
-                    else => |c| return .{ .token = .{ .char = c } },
+                    else => {
+                        const limit = @ptrToInt(self.ptr) - @ptrToInt(self.start);
+                        return .{ .token = .{ .char = .{
+                            .start = limit - self.current_input_character.len,
+                            .limit = limit,
+                        }}};
+                    },
                 }
             },
-            .tag_open => {
+            .tag_open => |tag_open_start| {
                 try self.consume();
                 if (self.current_input_character.len == 0) {
                     self.state = .eof;
+                    const limit = @ptrToInt(self.ptr) - @ptrToInt(self.start);
                     return .{
                         .token = .{ .parse_error = .eof_before_tag_name },
-                        .deferred = .{ .char = '<' },
+                        .deferred = .{ .char = .{
+                            .start = tag_open_start,
+                            .limit = limit,
+                        } },
                     };
                 }
                 switch (self.current_input_character.val) {
                     '!' => self.state = .markup_declaration_open,
-                    '/' => self.state = .end_tag_open,
+                    '/' => self.state = .{ .end_tag_open = tag_open_start },
                     '?' => return error.NotImpl,
                     else => |c| if (isAsciiAlpha(c)) {
                         self.state = .{
@@ -213,12 +229,16 @@ fn next2(self: *Tokenizer) !?struct {
                         self.ptr -= self.current_input_character.len;
                         return .{
                             .token = .{ .parse_error = .invalid_first_character_of_tag_name },
-                            .deferred = .{ .char = '<' },
+                            .deferred = .{ .char = .{
+                                .start = tag_open_start,
+                                // TODO: hopefully the '<' was only 1 byte!
+                                .limit = tag_open_start + 1,
+                            } },
                         };
                     },
                 }
             },
-            .end_tag_open => {
+            .end_tag_open => |tag_open_start| {
                 const save_previous_char_len = self.current_input_character.len;
                 try self.consume();
                 if (self.current_input_character.len == 0) {
@@ -228,7 +248,11 @@ fn next2(self: *Tokenizer) !?struct {
                     self.ptr -= save_previous_char_len;
                     return .{
                         .token = .{ .parse_error = .eof_before_tag_name },
-                        .deferred = .{ .char = '<' },
+                        .deferred = .{ .char = .{
+                            .start = tag_open_start,
+                            // TODO: hopefully the '<' was only 1 byte!
+                            .limit = tag_open_start + 1,
+                        } },
                     };
                 }
                 switch (self.current_input_character.val) {

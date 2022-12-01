@@ -78,10 +78,8 @@ pub fn main() !u8 {
                 .start_tag_self_closed =>  {
                     std.log.info("StartTagSelfClosed", .{});
                 },
-                .char => |c| {
-                    var s: [10]u8 = undefined;
-                    const len = std.unicode.utf8Encode(c, &s) catch unreachable;
-                    std.log.info("Char: '{}'", .{std.zig.fmtEscapes(s[0 .. len])});
+                .char => |t| {
+                    std.log.info("Char: '{}'", .{std.zig.fmtEscapes(t.slice(content))});
                 },
                 else => |t| {
                     std.log.info("{}", .{t});

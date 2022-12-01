@@ -109,8 +109,9 @@ pub const DomNode = union(enum) {
     },
     attr: struct {
         id: AttrId,
-        value: u32,
+        value: ?Tokenizer.Span,
     },
+    text: Tokenizer.Span,
 };
 
 const ParseOptions = struct {
@@ -143,6 +144,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         start: void,
         in_doctype: void,
         default: void,
+        data: Tokenizer.Span,
         in_tag: struct {
             start_node_index: usize,
         },
@@ -157,6 +159,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
     var tokenizer = Tokenizer.init(content);
     var saved_token: ?Token = null;
 
+    parse_loop:
     while (true) {
         switch (state) {
             .start => {
@@ -183,7 +186,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                 }
             },
             .default => {
-                const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
+                const token = (try next(&tokenizer, &saved_token)) orelse break :parse_loop;
                 switch (token) {
                     .start_tag => |t| {
                         const name_raw = t.name_raw.slice(content);
@@ -198,6 +201,26 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                         }
                     },
                     else => std.debug.panic("todo handle token {}", .{token})
+                }
+            },
+            .data => |*data_span| {
+                if (try next(&tokenizer, &saved_token)) |token| switch (token) {
+                    .char => |span| {
+                        //std.log.info("old '{s}' {} new '{s}' {}", .{
+                        //    data_span.slice(content), data_span.*,
+                        //    span.slice(content), span});
+                        // TODO: this should be true eventually
+                        //std.debug.assert(data_span.limit == span.start);
+                        data_span.limit = span.limit;
+                    },
+                    else => {
+                        try nodes.append(allocator, .{ .text = data_span.* });
+                        saved_token = token;
+                        state = .default;
+                    },
+                } else {
+                    try nodes.append(allocator, .{ .text = data_span.* });
+                    state = .default;
                 }
             },
             .in_tag => |tag_state| {
@@ -217,11 +240,12 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                             return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(name_raw)});
                         };
                         // TODO: also process value
-                        try nodes.append(allocator, .{ .attr = .{ .id = id, .value = 0 } });
+                        try nodes.append(allocator, .{ .attr = .{ .id = id, .value = t.value_raw } });
                     },
                     .start_tag_self_closed => {
                         nodes.items[tag_state.start_node_index].tag.self_closing = true;
                     },
+                    .char => |span| state = .{ .data = span },
                     else => std.debug.panic("todo handle token {}", .{token})
                 }
             },
