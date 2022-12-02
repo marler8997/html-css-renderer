@@ -37,13 +37,9 @@ pub const Span = struct {
 
 pub const Token = union(enum) {
     doctype: Doctype,
-    // TODO: maybe combine start/end tag?
-    start_tag: StartTag,
+    start_tag: Span,
+    end_tag: Span,
     start_tag_self_closed: void,
-    end_tag: struct {
-        name: usize,
-        self_closing: bool,
-    },
     attr: struct {
         // NOTE: process the name_raw by replacing
         //     - upper-case ascii alpha with lower case (add 0x20)
@@ -282,23 +278,24 @@ fn next2(self: *Tokenizer) !?struct {
                 switch (self.current_input_character.val) {
                     '\t', '\n', form_feed, ' ' => {
                         self.state = .before_attribute_name;
-                        return .{ .token = .{ .start_tag = .{
-                            .name_raw = .{
-                                .start = tag_state.start,
-                                .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
-                            },
-                        }}};
+                        const name_span = Span{
+                            .start = tag_state.start,
+                            .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                        };
+                        return
+                            if (tag_state.is_end) .{ .token = .{ .end_tag = name_span } }
+                            else .{ .token = .{ .start_tag = name_span } };
                     },
                     '/' => self.state = .self_closing_start_tag,
                     '>' => {
                         self.state = .data;
-                        return .{ .token = .{ .start_tag = .{
-                            .name_raw = .{
-                                .start = tag_state.start,
-                                .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
-                            },
-                        }}};
-                        //return error.TodoReturnCurrentTagToken;
+                        const name_span = Span{
+                            .start = tag_state.start,
+                            .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                        };
+                        return
+                            if (tag_state.is_end) .{ .token = .{ .end_tag = name_span } }
+                            else .{ .token = .{ .start_tag = name_span } };
                     },
                     0 => return .{ .token = .{ .parse_error = .unexpected_null_character } },
                     else => {},

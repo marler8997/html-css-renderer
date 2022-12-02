@@ -3,6 +3,7 @@ const std = @import("std");
 
 const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
+const alext = @import("alext.zig");
 
 pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
@@ -66,15 +67,16 @@ pub fn main() !u8 {
     };
 
     var parse_context = ParseContext{ .filename = filename };
-    const nodes = dom.parse(arena.allocator(), content, .{
+    var nodes = dom.parse(arena.allocator(), content, .{
         .context = &parse_context,
         .on_error = onParseError,
     }) catch |err| switch (err) {
         error.ReportedParseError => return 0xff,
         else => |e| return e,
     };
+    alext.unmanaged.finalize(dom.Node, &nodes, arena.allocator());
 
-    try @import("render.zig").dump(content, nodes);
+    try @import("render.zig").dump(content, nodes.items);
     return 0;
 }
 

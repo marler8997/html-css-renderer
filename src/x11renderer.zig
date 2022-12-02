@@ -6,8 +6,11 @@ const ContiguousReadBuffer = x11.ContiguousReadBuffer;
 
 const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
+const layout = @import("layout.zig");
+const Styler = layout.Styler;
+const alext = @import("alext.zig");
 
-var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var global_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
 const window_width = 600;
 const window_height = 600;
@@ -67,20 +70,21 @@ pub fn main() !u8 {
             return 0xff;
         };
         defer file.close();
-        break :blk try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize));
+        break :blk try file.readToEndAlloc(global_arena.allocator(), std.math.maxInt(usize));
     };
 
     var parse_context = ParseContext{ .filename = filename };
-    const nodes = dom.parse(arena.allocator(), content, .{
+    var nodes = dom.parse(global_arena.allocator(), content, .{
         .context = &parse_context,
         .on_error = onParseError,
     }) catch |err| switch (err) {
         error.ReportedParseError => return 0xff,
         else => |e| return e,
     };
+    alext.unmanaged.finalize(dom.Node, &nodes, global_arena.allocator());
 
     //try @import("render.zig").dump(content, nodes);
-    return try renderNodes(content, nodes);
+    return try renderNodes(content, nodes.items);
 }
 
 const ParseContext = struct {
@@ -95,7 +99,7 @@ fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
 
 
 fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
-    const conn = try connect(arena.allocator());
+    const conn = try connect(global_arena.allocator());
     defer std.os.shutdown(conn.sock, .both) catch {};
 
     const screen = blk: {
@@ -321,7 +325,7 @@ fn render(
     fg_gc_id: u32,
     font_dims: FontDims,
     html_content: []const u8,
-    html_nodes: []const dom.Node,
+    dom_nodes: []const dom.Node,
 ) !void {
     {
         var msg: [x11.clear_area.len]u8 = undefined;
@@ -331,46 +335,41 @@ fn render(
         try send(sock, &msg);
     }
 
-    var in_body = false;
-    var y: i16 = 0;
-    for (html_nodes) |node| {
-        if (!in_body) {
-            switch (node) {
-                .tag => |t| {
-                    if (t.id == .body) in_body = true;
-                },
-                .attr => {},
-                .text => {},
-            }
-            continue;
-        }
-        switch (node) {
-            .text => |span| {
-                const full_slice = span.slice(html_content);
-                const slice = std.mem.trim(u8, full_slice, " \t\r\n");
-                if (slice.len > 0) {
-                    const max_text_len = 255;
-                    const text_len = std.math.cast(u8, slice.len) orelse max_text_len;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
 
-                    var msg: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
-                    x11.image_text8.serialize(
-                        &msg,
-                        x11.Slice(u8, [*]const u8){ .ptr = slice.ptr, .len = text_len },
-                        .{
-                            .drawable_id = drawable_id,
-                            .gc_id = fg_gc_id,
-                            .x = 0,
-                            .y = y + font_dims.font_ascent,
-                        },
-                    );
-                    try send(sock, msg[0 .. x11.image_text8.getLen(text_len)]);
-                    y += font_dims.height;
-                }
-            },
-            .tag => {},
-            .attr => {},
-        }
-    }
+    const layout_nodes = layout.layout(
+        arena.allocator(),
+        html_content,
+        dom_nodes,
+        .{ .x = window_width, .y = window_height },
+        Styler{ },
+    ) catch |err| {
+        // TODO: maybe draw this error as text?
+        std.log.err("layout failed, error={s}", .{@errorName(err)});
+        return;
+    };
+
+    for (layout_nodes.items) |node| switch (node) {
+        .text => |t| {
+            // TODO: handle font slice
+            const max_text_len = 255;
+            const text_len = std.math.cast(u8, t.slice.len) orelse max_text_len;
+
+            var msg: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
+            x11.image_text8.serialize(
+                &msg,
+                x11.Slice(u8, [*]const u8){ .ptr = t.slice.ptr, .len = text_len },
+                .{
+                    .drawable_id = drawable_id,
+                    .gc_id = fg_gc_id,
+                    .x = @intCast(i16, t.x),
+                    .y = @intCast(i16, t.y) + font_dims.font_ascent,
+                },
+            );
+            try send(sock, msg[0 .. x11.image_text8.getLen(text_len)]);
+        },
+    };
 }
 
 pub const SocketReader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket);

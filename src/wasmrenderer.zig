@@ -2,6 +2,10 @@ const std = @import("std");
 const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
 const layout = @import("layout.zig");
+const Styler = layout.Styler;
+const LayoutNode = layout.LayoutNode;
+const alext = @import("alext.zig");
+
 const Refcounted = @import("Refcounted.zig");
 
 const XY = layout.XY;
@@ -11,7 +15,7 @@ const js = struct {
     extern fn logFlush() void;
     extern fn initCanvas() void;
     extern fn canvasClear() void;
-    extern fn drawText(x: usize, y: usize, ptr: [*]const u8, len: usize) void;
+    extern fn drawText(x: u32, y: u32, font_size: usize, ptr: [*]const u8, len: usize) void;
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){ };
@@ -31,7 +35,7 @@ export fn release(ptr: [*]u8, len: usize) void {
     buf.unref(gpa.allocator(), len);
 }
 
-export fn onResize(width: usize, height: usize) void {
+export fn onResize(width: u32, height: u32) void {
     const html_buf = global_opt_html_buf orelse {
         std.log.warn("onResize called without an html doc being loaded", .{});
         return;
@@ -42,19 +46,19 @@ export fn onResize(width: usize, height: usize) void {
         return;
     };
 
-    render(html, XY(usize).init(width, height), dom_nodes);
+    render(html, XY(u32).init(width, height), dom_nodes.items);
 }
 
 var global_opt_html_buf: ?struct {
     buf: Refcounted,
     len: usize,
 } = null;
-var global_opt_dom_nodes: ?[]dom.Node = null;
+var global_opt_dom_nodes: ?std.ArrayListUnmanaged(dom.Node) = null;
 
 export fn loadHtml(
     name_ptr: [*]u8, name_len: usize,
     html_ptr: [*]u8, html_len: usize,
-    viewport_width: usize, viewport_height: usize,
+    viewport_width: u32, viewport_height: u32,
 ) void {
     const name = name_ptr[0 .. name_len];
 
@@ -65,22 +69,23 @@ export fn loadHtml(
     global_opt_html_buf = .{ .buf = Refcounted{ .data_ptr = html_ptr }, .len = html_len };
     global_opt_html_buf.?.buf.addRef();
 
-    loadHtmlSlice(name, html_ptr[0 .. html_len], XY(usize).init(viewport_width, viewport_height));
+    loadHtmlSlice(name, html_ptr[0 .. html_len], XY(u32).init(viewport_width, viewport_height));
 }
 
 fn loadHtmlSlice(
     name: []const u8,
     html: []const u8,
-    viewport_size: XY(usize),
+    viewport_size: XY(u32),
 ) void {
-    if (global_opt_dom_nodes) |nodes| {
-        gpa.allocator().free(nodes);
+    if (global_opt_dom_nodes) |*nodes| {
+        nodes.deinit(gpa.allocator());
         global_opt_dom_nodes = null;
     }
 
     std.log.info("load html from '{s}'...", .{name});
     var parse_context = ParseContext{ .name = name };
-    global_opt_dom_nodes = dom.parse(gpa.allocator(), html, .{
+
+    var nodes = dom.parse(gpa.allocator(), html, .{
         .context = &parse_context,
         .on_error = onParseError,
     }) catch |err| switch (err) {
@@ -90,53 +95,40 @@ fn loadHtmlSlice(
             return;
         },
     };
+    alext.unmanaged.finalize(dom.Node, &nodes, gpa.allocator());
+    global_opt_dom_nodes = nodes;
 
     js.initCanvas();
-    render(html, viewport_size, global_opt_dom_nodes.?);
+    render(html, viewport_size, nodes.items);
 }
 
 fn render(
     html: []const u8,
-    viewport_size: XY(usize),
+    viewport_size: XY(u32),
     dom_nodes: []const dom.Node,
 ) void {
     js.canvasClear();
 
-    _ = viewport_size;
-    //const layout_nodes = layout.layout(
-    //    arena.allocator(),
-    //    html,
-    //    dom_nodes,
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
 
-    // default font for html5 canvas is "10px sans-serif"
-    const font_height = 10; // hardcoded for now
-    var in_body = false;
-    var y: usize = 0;
-    for (dom_nodes) |node| {
-        if (!in_body) {
-            switch (node) {
-                .tag => |t| {
-                    if (t.id == .body) in_body = true;
-                },
-                .attr => {},
-                .text => {},
-            }
-            continue;
-        }
-        switch (node) {
-            .text => |span| {
-                const full_slice = span.slice(html);
-                const slice = std.mem.trim(u8, full_slice, " \t\r\n");
-                if (slice.len > 0) {
-                    js.drawText(0, y + font_height, slice.ptr, slice.len);
-                    y += font_height;
-                }
-            },
-            .tag => {},
-            .attr => {},
-        }
-    }
+    const layout_nodes = layout.layout(
+        arena.allocator(),
+        html,
+        dom_nodes,
+        viewport_size,
+        Styler{ },
+    ) catch |err| {
+        // TODO: maybe draw this error as text?
+        std.log.err("layout failed, error={s}", .{@errorName(err)});
+        return;
+    };
 
+    for (layout_nodes.items) |node| switch (node) {
+        .text => |t| {
+            js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
+        },
+    };
 }
 
 const ParseContext = struct {

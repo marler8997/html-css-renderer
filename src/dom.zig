@@ -124,10 +124,13 @@ fn lookupAttrIgnoreCase(name: []const u8) ?AttrId {
 }
 
 pub const Node = union(enum) {
-    tag: struct {
+    start_tag: struct {
         id: TagId,
         self_closing: bool,
+        // TODO: maybe make this a u32?
+        parent_index: usize,
     },
+    end_tag: TagId,
     attr: struct {
         id: AttrId,
         value: ?Tokenizer.Span,
@@ -160,27 +163,16 @@ fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
     return tokenizer.next();
 }
 
-pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) ![]Node {
-    var state: union(enum) {
-        default: void,
-        data: Tokenizer.Span,
-        in_tag: struct {
-            start_node_index: usize,
-        },
-        in_svg: struct {
-            start_node_index: usize,
-        },
-    } = .default;
+pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) !std.ArrayListUnmanaged(Node) {
+    var tokenizer = Tokenizer.init(content);
+    var saved_token: ?Token = null;
 
     var nodes = std.ArrayListUnmanaged(Node){ };
     errdefer nodes.deinit(allocator);
 
-    var tokenizer = Tokenizer.init(content);
-    var saved_token: ?Token = null;
-
     // check for doctype first
     {
-        const token = (try tokenizer.next()) orelse return nodes.toOwnedSlice(allocator);
+        const token = (try tokenizer.next()) orelse return nodes;
         switch (token) {
             .doctype => |d| {
                 const name = if (d.name_raw) |n| n.slice(content) else
@@ -194,79 +186,182 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         }
     }
 
-    parse_loop:
+    // get the html tag
+    get_html_tag_loop:
     while (true) {
-        switch (state) {
-            .default => {
-                const token = (try next(&tokenizer, &saved_token)) orelse break :parse_loop;
-                switch (token) {
-                    .start_tag => |t| {
-                        const name_raw = t.name_raw.slice(content);
-                        const id = lookupTagIgnoreCase(name_raw) orelse
-                            return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
-                        //std.log.info("DEBUG: start <{s}>", .{@tagName(id)});
-                        try nodes.append(allocator, .{ .tag = .{ .id = id, .self_closing = false } });
-                        if (id == .svg) {
-                            state = .{ .in_svg = .{ .start_node_index = nodes.items.len - 1} };
-                        } else {
-                            state = .{ .in_tag = .{ .start_node_index = nodes.items.len - 1 } };
-                        }
-                    },
-                    .char => |span| state = .{ .data = span },
-                    else => std.debug.panic("todo handle token {}", .{token})
-                }
+        const token = (try next(&tokenizer, &saved_token)) orelse return nodes;
+        switch (token) {
+            .start_tag => |name_raw_span| {
+                const name_raw = name_raw_span.slice(content);
+                if (!std.mem.eql(u8, name_raw, "html"))
+                    return opt.reportError("expected <html> but got <{}>", .{std.zig.fmtEscapes(name_raw)});
+                break :get_html_tag_loop;
             },
-            .data => |*data_span| {
-                if (try next(&tokenizer, &saved_token)) |token| switch (token) {
-                    .char => |span| {
-                        //std.log.info("old '{s}' {} new '{s}' {}", .{
-                        //    data_span.slice(content), data_span.*,
-                        //    span.slice(content), span});
-                        // TODO: this should be true eventually
-                        //std.debug.assert(data_span.limit == span.start);
-                        data_span.limit = span.limit;
-                    },
-                    else => {
-                        try nodes.append(allocator, .{ .text = data_span.* });
-                        saved_token = token;
-                        state = .default;
-                    },
-                } else {
-                    try nodes.append(allocator, .{ .text = data_span.* });
-                    state = .default;
-                }
+            .char => |span| {
+                const slice = span.slice(content);
+                if (!isWhitespace(slice))
+                    return opt.reportError("unexpected data before <html> '{}'", .{std.zig.fmtEscapes(slice)});
             },
-            .in_tag => |tag_state| {
-                const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
-                switch (token) {
-                    .start_tag => {
-                        //std.log.info("DEBUG: append <{s}>", .{@tagName(tag_state.id)});
-                        saved_token = token;
-                        state = .default;
-                    },
-                    .attr => |t| {
-                        const name_raw = t.name_raw.slice(content);
-                        //std.log.info("DEBUG: attr name_raw is '{s}'", .{name_raw});
-                        const id = lookupAttrIgnoreCase(name_raw) orelse {
-                            if (std.ascii.startsWithIgnoreCase(name_raw, "data-"))
-                                return opt.reportError("custom attribute '{s}' not supported", .{name_raw});
-                            return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(name_raw)});
-                        };
-                        // TODO: also process value
-                        try nodes.append(allocator, .{ .attr = .{ .id = id, .value = t.value_raw } });
-                    },
-                    .start_tag_self_closed => {
-                        nodes.items[tag_state.start_node_index].tag.self_closing = true;
-                    },
-                    .char => |span| state = .{ .data = span },
-                    else => std.debug.panic("todo handle token {}", .{token})
-                }
-            },
-            .in_svg => |tag_state| {
-                _ = tag_state;
-                std.debug.panic("todo: handle svg", .{});
-            },
+            else => return opt.reportError("expected <html> but got a {s} token", .{@tagName(token)}),
         }
     }
-    return nodes.toOwnedSlice(allocator);
+    try nodes.append(allocator, .{.start_tag = .{
+        .id = .html,
+        .parent_index = 0,
+        .self_closing = false,
+    }});
+
+    const State = union(enum) {
+        default: struct {
+            start_tag_index: usize,
+        },
+        data: struct {
+            start_tag_index: usize,
+            span: Tokenizer.Span,
+        },
+        in_tag: InTag,
+        in_svg: struct {
+            start_tag_index: usize,
+        },
+        pub const InTag = struct {
+            parent_tag_index: usize,
+            start_tag_index: usize,
+        };
+    };
+    var state = State{ .default = .{ .start_tag_index = 0 } };
+
+    parse_loop:
+    while (true) switch (state) {
+        .default => |default_state| {
+            const token = (try next(&tokenizer, &saved_token)) orelse return opt.reportError(
+                "missing </{s}>",
+                .{@tagName(nodes.items[default_state.start_tag_index].start_tag.id)},
+            );
+            switch (token) {
+                .start_tag => |name_raw_span| {
+                    const name_raw = name_raw_span.slice(content);
+                    const id = lookupTagIgnoreCase(name_raw) orelse
+                        return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
+                    //std.log.info("DEBUG: <{s}> (start={},void={})", .{@tagName(id), default_state.start_tag_index, isVoidElement(id)});
+                    try nodes.append(allocator, .{ .start_tag = .{
+                        .id = id,
+                        .parent_index = default_state.start_tag_index,
+                        .self_closing = false,
+                    } });
+                    const next_start_tag_index = if (isVoidElement(id))
+                        default_state.start_tag_index
+                    else
+                        nodes.items.len - 1;
+                    if (id == .svg) {
+                        state = .{ .in_svg = .{ .start_tag_index = next_start_tag_index } };
+                    } else {
+                        state = .{ .in_tag = .{
+                            .parent_tag_index = default_state.start_tag_index,
+                            .start_tag_index = next_start_tag_index,
+                        } };
+                    }
+                },
+                .end_tag => |name_raw_span| {
+                    const name_raw = name_raw_span.slice(content);
+                    const id = lookupTagIgnoreCase(name_raw) orelse
+                        return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
+                    //std.log.info("DEBUG: </{s}>", .{@tagName(id)});
+                    const start_tag = switch (nodes.items[default_state.start_tag_index]) {
+                        .start_tag => |*t| t,
+                        else => unreachable,
+                    };
+                    if (start_tag.id != id)
+                        return opt.reportError("</{s}> cannot close <{s}>", .{@tagName(id), @tagName(start_tag.id)});
+                    try nodes.append(allocator, .{ .end_tag = id });
+                    if (default_state.start_tag_index == 0)
+                        break :parse_loop;
+                    //std.log.debug("DEBUG: restoring <{s}>", .{@tagName(nodes.items[start_tag.parent_index].start_tag.id)});
+                    state = .{ .default = .{
+                        .start_tag_index = start_tag.parent_index,
+                    }};
+                },
+                .char => |span| state = .{ .data = .{
+                    .start_tag_index = default_state.start_tag_index,
+                    .span = span,
+                }},
+                else => std.debug.panic("todo handle token {}", .{token})
+            }
+        },
+        .data => |*data_state| {
+            if (try next(&tokenizer, &saved_token)) |token| switch (token) {
+                .char => |span| {
+                    //std.log.info("old '{s}' {} new '{s}' {}", .{
+                    //    data_state.span.slice(content), data_state.span,
+                    //    span.slice(content), span});
+                    // TODO: this should be true eventually
+                    //std.debug.assert(data_state.span.limit == span.start);
+                    data_state.span.limit = span.limit;
+                },
+                else => {
+                    try nodes.append(allocator, .{ .text = data_state.span });
+                    saved_token = token;
+                    state = .{ .default = .{
+                        .start_tag_index = data_state.start_tag_index,
+                    }};
+                },
+            } else {
+                try nodes.append(allocator, .{ .text = data_state.span });
+                state = .{ .default = .{
+                    .start_tag_index = data_state.start_tag_index,
+                }};
+            }
+        },
+        .in_tag => |tag_state| {
+            const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
+            switch (token) {
+                .start_tag, .end_tag => {
+                    //std.log.info("DEBUG: append <{s}>", .{@tagName(tag_state.id)});
+                    saved_token = token;
+                    state = .{ .default = .{
+                        .start_tag_index = tag_state.start_tag_index,
+                    }};
+                },
+                .attr => |t| {
+                    const name_raw = t.name_raw.slice(content);
+                    //std.log.info("DEBUG: attr name_raw is '{s}'", .{name_raw});
+                    const id = lookupAttrIgnoreCase(name_raw) orelse {
+                        if (std.ascii.startsWithIgnoreCase(name_raw, "data-"))
+                            return opt.reportError("custom attribute '{s}' not supported", .{name_raw});
+                        return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(name_raw)});
+                    };
+                    // TODO: also process value
+                    try nodes.append(allocator, .{ .attr = .{ .id = id, .value = t.value_raw } });
+                },
+                .start_tag_self_closed => {
+                    nodes.items[tag_state.start_tag_index].start_tag.self_closing = true;
+                },
+                .char => |span| state = .{ .data = .{
+                    .start_tag_index = tag_state.start_tag_index,
+                    .span = span,
+                }},
+                else => std.debug.panic("todo handle token {}", .{token})
+            }
+        },
+        .in_svg => |tag_state| {
+            _ = tag_state;
+            std.debug.panic("todo: handle svg", .{});
+        },
+    };
+
+    while (try next(&tokenizer, &saved_token)) |token| switch (token) {
+        .char => |span| {
+            const slice = span.slice(content);
+            if (!isWhitespace(slice))
+                return opt.reportError("unexpected data after </html> '{}'", .{std.zig.fmtEscapes(slice)});
+        },
+        else => return opt.reportError("unexpected {s} token after </html>", .{@tagName(token)}),
+    };
+    return nodes;
+}
+
+fn isWhitespace(slice: []const u8) bool {
+    for (slice) |c| {
+        if (!std.ascii.isWhitespace(c)) return false;
+    }
+    return true;
 }

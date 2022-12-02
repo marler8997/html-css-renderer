@@ -51,9 +51,10 @@ const wasm_env = {
         global_canvas.fillStyle = "white";
         global_canvas.fillRect(0, 0, global_canvas_dom.width, global_canvas_dom.height);
     },
-    drawText: function(x, y, text_ptr, text_len) {
+    drawText: function(x, y, font_size, text_ptr, text_len) {
         const text = readStr(global_wasm.memory.buffer, text_ptr, text_len);
-        console.log("drawText " + x + ", " + y + " '" + text + "'");
+        console.log("drawText " + x + ", " + y + " font_size=" + font_size + ", '" + text + "'");
+        global_canvas.font = font_size + 'px sans-serif';
         global_canvas.fillStyle = "black";
         global_canvas.fillText(text, x, y);
     },

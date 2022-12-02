@@ -72,7 +72,7 @@ fn allocIdMapSource(allocator: std.mem.Allocator) []const u8 {
     var src = std.ArrayList(u8).init(allocator);
     errdefer src.deinit();
     writeIdMapSource(src.writer()) catch unreachable;
-    return src.toOwnedSlice();
+    return src.toOwnedSlice() catch unreachable;
 }
 
 fn writeIdMapSource(writer: anytype) !void {

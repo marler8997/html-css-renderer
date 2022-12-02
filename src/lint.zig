@@ -68,8 +68,11 @@ pub fn main() !u8 {
                     const name = if (d.name_raw) |n| n.slice(content) else "<none>";
                     std.log.info("Doctype: name={s}", .{name});
                 },
-                .start_tag => |t| {
-                    std.log.info("StartTag: name={s}", .{t.name_raw.slice(content)});
+                .start_tag => |name_span_raw| {
+                    std.log.info("StartTag: name={s}", .{name_span_raw.slice(content)});
+                },
+                .end_tag => |name_span_raw| {
+                    std.log.info("EndTag: name={s}", .{name_span_raw.slice(content)});
                 },
                 .attr => |a| {
                     const value = if (a.value_raw) |v| v.slice(content) else "<none>";
