@@ -1,12 +1,15 @@
 const std = @import("std");
 const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
+const layout = @import("layout.zig");
 const Refcounted = @import("Refcounted.zig");
+
+const XY = layout.XY;
 
 const js = struct {
     extern fn logWrite(ptr: [*]const u8, len: usize) void;
     extern fn logFlush() void;
-    extern fn initCanvas(width: usize, height: usize) void;
+    extern fn initCanvas() void;
     extern fn canvasClear() void;
     extern fn drawText(x: usize, y: usize, ptr: [*]const u8, len: usize) void;
 };
@@ -29,21 +32,55 @@ export fn release(ptr: [*]u8, len: usize) void {
 }
 
 export fn onResize(width: usize, height: usize) void {
-    std.log.info("todo: resize {} x {}", .{width, height});
+    const html_buf = global_opt_html_buf orelse {
+        std.log.warn("onResize called without an html doc being loaded", .{});
+        return;
+    };
+    const html = html_buf.buf.data_ptr[0 .. html_buf.len];
+    const dom_nodes = global_opt_dom_nodes orelse {
+        std.log.warn("onResize called but there's no dom nodes", .{});
+        return;
+    };
+
+    render(html, XY(usize).init(width, height), dom_nodes);
 }
 
-export fn loadHtml(name_ptr: [*]u8, name_len: usize, html_ptr: [*]u8, html_len: usize) void {
+var global_opt_html_buf: ?struct {
+    buf: Refcounted,
+    len: usize,
+} = null;
+var global_opt_dom_nodes: ?[]dom.Node = null;
+
+export fn loadHtml(
+    name_ptr: [*]u8, name_len: usize,
+    html_ptr: [*]u8, html_len: usize,
+    viewport_width: usize, viewport_height: usize,
+) void {
     const name = name_ptr[0 .. name_len];
-    const html_buf = Refcounted{ .data_ptr = html_ptr };
-    loadHtmlSlice(name, html_buf, html_len);
+
+    if (global_opt_html_buf) |html_buf| {
+        html_buf.buf.unref(gpa.allocator(), html_buf.len);
+        global_opt_html_buf = null;
+    }
+    global_opt_html_buf = .{ .buf = Refcounted{ .data_ptr = html_ptr }, .len = html_len };
+    global_opt_html_buf.?.buf.addRef();
+
+    loadHtmlSlice(name, html_ptr[0 .. html_len], XY(usize).init(viewport_width, viewport_height));
 }
-fn loadHtmlSlice(name: []const u8, html_buf: Refcounted, html_len: usize) void {
-    const html = html_buf.data_ptr[0 .. html_len];
+
+fn loadHtmlSlice(
+    name: []const u8,
+    html: []const u8,
+    viewport_size: XY(usize),
+) void {
+    if (global_opt_dom_nodes) |nodes| {
+        gpa.allocator().free(nodes);
+        global_opt_dom_nodes = null;
+    }
+
     std.log.info("load html from '{s}'...", .{name});
     var parse_context = ParseContext{ .name = name };
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    // defer arena.deinit();
-    const nodes = dom.parse(arena.allocator(), html, .{
+    global_opt_dom_nodes = dom.parse(gpa.allocator(), html, .{
         .context = &parse_context,
         .on_error = onParseError,
     }) catch |err| switch (err) {
@@ -54,14 +91,28 @@ fn loadHtmlSlice(name: []const u8, html_buf: Refcounted, html_len: usize) void {
         },
     };
 
-    js.initCanvas(200, 200);
+    js.initCanvas();
+    render(html, viewport_size, global_opt_dom_nodes.?);
+}
+
+fn render(
+    html: []const u8,
+    viewport_size: XY(usize),
+    dom_nodes: []const dom.Node,
+) void {
     js.canvasClear();
 
-    //html_buf.addRef();
+    _ = viewport_size;
+    //const layout_nodes = layout.layout(
+    //    arena.allocator(),
+    //    html,
+    //    dom_nodes,
+
+    // default font for html5 canvas is "10px sans-serif"
     const font_height = 10; // hardcoded for now
     var in_body = false;
     var y: usize = 0;
-    for (nodes) |node| {
+    for (dom_nodes) |node| {
         if (!in_body) {
             switch (node) {
                 .tag => |t| {

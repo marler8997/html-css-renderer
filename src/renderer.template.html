@@ -34,6 +34,7 @@ var global_wasm = undefined;
 var global_current_log = "";
 var global_canvas_dom = undefined;
 var global_canvas = undefined;
+var global_wasm_last_size_sent = undefined;
 const wasm_env = {
     logWrite: function(ptr, len) {
         global_current_log += readStr(global_wasm.memory.buffer, ptr, len);
@@ -45,7 +46,6 @@ const wasm_env = {
     initCanvas: function() {
         global_canvas_dom = document.getElementById("Canvas");
         global_canvas = global_canvas_dom.getContext("2d");
-        updateRenderSizes();
     },
     canvasClear: function() {
         global_canvas.fillStyle = "white";
@@ -108,9 +108,14 @@ function loadHtml(name, html) {
     } else {
         const iframe = document.getElementById("Iframe");
         iframe.srcdoc = html;
+
+        global_canvas = undefined;
+        const size = updateRenderSizes();
         global_wasm.loadHtml(
             name_obj.ptr, name_obj.len,
-            html_obj.ptr, html_obj.len);
+            html_obj.ptr, html_obj.len,
+            size.x, size.y);
+        global_wasm_last_size_sent = size;
         global_wasm.release(html_obj.ptr, html_obj.len);
     }
     global_wasm.release(name_obj.ptr, name_obj.len);
@@ -128,22 +133,27 @@ function submitText() {
 
 function updateRenderSizes() {
     const container = document.getElementById("RendersDiv");
-    const width = Math.trunc(Math.floor(container.offsetWidth / 2) - 1);
-
     const canvas_wrapper = document.getElementById("CanvasWrapper");
-    canvas_wrapper.style.width = width + "px";
-    const height = Math.trunc(canvas_wrapper.offsetHeight);
+    const size = {
+        x: Math.trunc(Math.floor(container.offsetWidth / 2) - 1),
+        y: Math.trunc(canvas_wrapper.offsetHeight),
+    };
+    canvas_wrapper.style.width = size.x + "px";
 
     const c = document.getElementById("Canvas");
-    c.width = width;
-    c.height = height;
-    if (global_canvas != undefined) {
-        global_wasm.onResize(width, height);
-    }
-
+    c.width = size.x;
+    c.height = size.y;
     const iframe = document.getElementById("Iframe");
-    iframe.width = width;
-    iframe.height = height;
+    iframe.width = size.x;
+    iframe.height = size.y;
+
+    if (global_canvas != undefined) {
+        if (global_wasm_last_size_sent.x != size.x || global_wasm_last_size_sent.y != size.y) {
+            global_wasm.onResize(size.x, size.y);
+            global_wasm_last_size_sent = size;
+        }
+    }
+    return size;
 }
 function onWindowResize() {
     updateRenderSizes();
