@@ -1,5 +1,4 @@
 zig-cache/
 zig-out/
 /dep/
-/src/htmlidmaps.zig
-/html-css-renderer.html
+/htmlidmaps.zig

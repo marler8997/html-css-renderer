@@ -1,28 +1,16 @@
 const std = @import("std");
 const GitRepoStep = @import("GitRepoStep.zig");
-const htmlid = @import("src/htmlid.zig");
+const htmlid = @import("htmlid.zig");
 
 pub fn build(b: *std.build.Builder) void {
-    const build_tools = b.step("buildtools", "build/install the build tools");
-    {
-        const exe = b.addExecutable("fsveil", "fsveil.zig");
-        const install = b.addInstallArtifact(exe);
-        build_tools.dependOn(&install.step);
-    }
-    {
-        const exe = b.addExecutable("which", "which.zig");
-        const install = b.addInstallArtifact(exe);
-        build_tools.dependOn(&install.step);
-    }
-
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
-    const id_maps_src = b.pathJoin(&.{ b.build_root, "src", "htmlidmaps.zig"});
+    const id_maps_src = b.pathJoin(&.{ b.build_root, "htmlidmaps.zig"});
     const gen_id_maps = b.addWriteFile(id_maps_src, allocIdMapSource(b.allocator));
 
     {
-        const exe = b.addExecutable("lint", "src/lint.zig");
+        const exe = b.addExecutable("lint", "lint.zig");
         exe.step.dependOn(&gen_id_maps.step);
         exe.setTarget(target);
         exe.setBuildMode(mode);
@@ -30,7 +18,7 @@ pub fn build(b: *std.build.Builder) void {
     }
 
     {
-        const exe = b.addExecutable("playground", "src/playground.zig");
+        const exe = b.addExecutable("playground", "playground.zig");
         exe.step.dependOn(&gen_id_maps.step);
         exe.setTarget(target);
         exe.setBuildMode(mode);
@@ -44,7 +32,7 @@ pub fn build(b: *std.build.Builder) void {
         .fetch_enabled = true,
     });
     {
-        const exe = b.addExecutable("x11renderer", "src/x11renderer.zig");
+        const exe = b.addExecutable("x11renderer", "x11renderer.zig");
         exe.step.dependOn(&gen_id_maps.step);
         exe.step.dependOn(&zigx_repo.step);
         exe.addPackagePath("x11", b.pathJoin(&.{ zigx_repo.path, "x.zig" }));
@@ -55,15 +43,15 @@ pub fn build(b: *std.build.Builder) void {
     }
 
     {
-        const exe = b.addSharedLibrary("wasmrenderer", "src/wasmrenderer.zig", .unversioned);
+        const exe = b.addSharedLibrary("wasmrenderer", "wasmrenderer.zig", .unversioned);
         exe.setBuildMode(mode);
         exe.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
 
-        const make_exe = b.addExecutable("make-renderer-webpage", "src/make-renderer-webpage.zig");
+        const make_exe = b.addExecutable("make-renderer-webpage", "make-renderer-webpage.zig");
         const run = make_exe.run();
         run.addArtifactArg(exe);
-        run.addFileSourceArg(.{ .path = "src/renderer.template.html"});
-        run.addArg(b.pathJoin(&.{ b.build_root, "html-css-renderer.html" }));
+        run.addFileSourceArg(.{ .path = "html-css-renderer.template.html"});
+        run.addArg(b.pathJoin(&.{ b.install_path, "html-css-renderer.html" }));
         b.step("wasm", "build the wasm-based renderer").dependOn(&run.step);
     }
 }

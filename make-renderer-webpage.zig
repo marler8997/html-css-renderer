@@ -41,6 +41,9 @@ pub fn main() !u8 {
         return 0xff;
     };
     {
+        if (std.fs.path.dirname(out_filename)) |out_dir| {
+            try std.fs.cwd().makePath(out_dir);
+        }
         var out_file = try std.fs.cwd().createFile(out_filename, .{});
         defer out_file.close();
         try out_file.writer().writeAll(html_template[0 .. wasm_marker]);
