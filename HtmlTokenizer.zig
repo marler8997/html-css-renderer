@@ -1,7 +1,8 @@
 /// An html5 tokenizer.
 /// Implements the state machine described here:
 ///     https://html.spec.whatwg.org/multipage/parsing.html#tokenization
-///
+/// This tokenizer does not perform any processing/allocation, it simply
+/// splits the input text into higher-level tokens.
 const HtmlTokenizer = @This();
 
 const std = @import("std");
@@ -49,10 +50,7 @@ pub const Token = union(enum) {
         value_raw: ?Span,
     },
     comment: Span,
-    // TODO: return multiple utf8-encoded chars in a single string
-    //       there's no reason for the tokenizer not to return all consecutive
-    //       char tokens as a single string
-    // chars: Span,
+    // TODO: maybe combine multiple utf8-encoded chars in a single string
     char: Span,
     parse_error: enum {
         unexpected_null_character,
@@ -75,15 +73,9 @@ pub const Token = union(enum) {
         //     - upper-case ascii alpha with lower case (add 0x20)
         //     - 0 with U+FFFD
         name_raw: ?Span,
-        public_id: usize,
-        system_id: usize,
         force_quirks: bool,
-    };
-    pub const StartTag = struct {
-        // NOTE: process name_raw by replacing
-        //     - upper-case ascii alpha with lower case (add 0x20)
-        //     - 0 with U+FFFD
-        name_raw: Span,
+        //public_id: usize,
+        //system_id: usize,
     };
 };
 
@@ -160,20 +152,13 @@ fn next2(self: *HtmlTokenizer) !?struct {
     token: Token,
     deferred: ?Token = null,
 } {
-    // TODO: not sure what this is for
-    //var return_state: ?State = null;
-
     while (true) {
         switch (self.state) {
             .data => {
                 try self.consume();
                 if (self.current_input_character.len == 0) return null;
                 switch (self.current_input_character.val) {
-                    '&' => {
-                        std.log.warn("TODO: implement character reference state", .{});
-                        //return_state = .data;
-                        //self.state = .character_reference;
-                    },
+                    //'&' => {} we don't process character references in the tokenizer
                     '<' => self.state = .{
                         .tag_open = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
                     },
@@ -464,7 +449,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         .token = .{ .parse_error = .eof_in_doctype },
                         .deferred = .{ .doctype = .{
                             .force_quirks = true,
-                            .name_raw = null, .public_id = 0, .system_id = 0,
+                            .name_raw = null,
                         }},
                     };
                 }
@@ -489,7 +474,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         .token = .{ .parse_error = .eof_in_doctype },
                         .deferred = .{ .doctype = .{
                             .force_quirks = true,
-                            .name_raw = null, .public_id = 0, .system_id = 0,
+                            .name_raw = null,
                         }}
                     };
                 }
@@ -506,7 +491,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.state = .data;
                         return .{ .token = .{ .doctype = .{
                             .force_quirks = true,
-                            .name_raw = null, .public_id = 0, .system_id = 0,
+                            .name_raw = null,
                         }}};
                     },
                     else => {
@@ -525,7 +510,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         .token = .{ .parse_error = .eof_in_doctype },
                         .deferred = .{ .doctype = .{
                             .force_quirks = true,
-                            .name_raw = null, .public_id = 0, .system_id = 0,
+                            .name_raw = null,
                         }},
                     };
                 }
@@ -543,8 +528,6 @@ fn next2(self: *HtmlTokenizer) !?struct {
                                 .start = doctype_state.name_offset,
                                 .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
                             },
-                            .public_id = 0,
-                            .system_id = 0,
                             .force_quirks = false,
                         }}};
                     },
