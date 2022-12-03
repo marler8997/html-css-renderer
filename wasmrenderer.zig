@@ -127,6 +127,9 @@ fn render(
         .text => |t| {
             js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
         },
+        .svg => {
+            std.log.info("TODO: draw svg!", .{});
+        },
     };
 }
 

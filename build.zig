@@ -59,35 +59,31 @@ fn writeIdMapSource(writer: anytype) !void {
     try writer.writeAll(
         \\const std = @import("std");
         \\const htmlid = @import("htmlid.zig");
-        \\pub const tag_id_map = blk: {
-        \\    @setEvalBranchQuota(3000);
-        \\    break :blk std.ComptimeStringMap(htmlid.TagId, .{
         \\
     );
-    inline for (@typeInfo(htmlid.TagId).Enum.fields) |field| {
+    try writeIdEnum(writer, htmlid.TagId, "tag");
+    try writeIdEnum(writer, htmlid.AttrId, "attr");
+}
+fn writeIdEnum(writer: anytype, comptime Enum: type, name: []const u8) !void {
+    try writer.print(
+        \\
+        \\pub const {s} = struct {{
+        \\    pub const Enum = {s};
+        \\    pub const map = blk: {{
+        \\        @setEvalBranchQuota(6000);
+        \\        break :blk std.ComptimeStringMap(Enum, .{{
+        \\
+        , .{name, @typeName(Enum)});
+    inline for (@typeInfo(Enum).Enum.fields) |field| {
         var lower_buf: [field.name.len]u8 = undefined;
         for (field.name) |c, i| {
             lower_buf[i] = std.ascii.toLower(c);
         }
-        try writer.print("        .{{ \"{s}\", .{} }},\n", .{lower_buf, std.zig.fmtId(field.name)});
+        try writer.print("            .{{ \"{s}\", .{} }},\n", .{lower_buf, std.zig.fmtId(field.name)});
     }
     try writer.writeAll(
-        \\    });
-        \\};
-        \\pub const attr_id_map = blk: {
-        \\    @setEvalBranchQuota(4000);
-        \\    break :blk std.ComptimeStringMap(htmlid.AttrId, .{
-        \\
-    );
-    inline for (@typeInfo(htmlid.AttrId).Enum.fields) |field| {
-        var lower_buf: [field.name.len]u8 = undefined;
-        for (field.name) |c, i| {
-            lower_buf[i] = std.ascii.toLower(c);
-        }
-        try writer.print("        .{{ \"{s}\", .{} }},\n", .{lower_buf, std.zig.fmtId(field.name)});
-    }
-    try writer.writeAll(
-        \\    });
+        \\        });
+        \\    };
         \\};
         \\
     );

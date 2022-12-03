@@ -28,6 +28,9 @@ pub const LayoutNode = union(enum) {
         font_size: u32,
         slice: []const u8,
     },
+    svg: struct {
+        start_dom_node: usize,
+    },
 };
 pub fn layout(
     allocator: std.mem.Allocator,
@@ -42,8 +45,20 @@ pub fn layout(
     var nodes = std.ArrayListUnmanaged(LayoutNode){ };
     errdefer nodes.deinit(allocator);
 
+    var dom_node_index: usize = 0;
+
+    // find the body tag
+    find_body_loop:
+    while (true) : (dom_node_index += 1) {
+        if (dom_node_index == dom_nodes.len) return nodes;
+        switch (dom_nodes[dom_node_index]) {
+            .start_tag => |t| if (t.id == .body) break :find_body_loop,
+            else => {},
+        }
+    }
+    dom_node_index += 1;
+
     // NOTE: we don't needs a stack for these states because they can only go 1 level deep
-    var in_body = false;
     var in_script = false;
 
     var render_cursor = XY(u32) { .x = 0, .y = 0 };
@@ -54,20 +69,11 @@ pub fn layout(
     };
     var state_stack = std.ArrayListUnmanaged(StackState) { };
 
-    for (dom_nodes) |node| {
-        if (!in_body) {
-            switch (node) {
-                .start_tag => |t| {
-                    if (t.id == .body) in_body = true;
-                },
-                .end_tag => {},
-                .attr => {},
-                .text => {},
-            }
-            continue;
-        }
-        switch (node) {
-            .text => |span| if (in_body and !in_script) {
+    body_loop:
+    while (dom_node_index < dom_nodes.len) : (dom_node_index += 1) {
+        const dom_node = &dom_nodes[dom_node_index];
+        switch (dom_node.*) {
+            .text => |span| if (!in_script) {
                 const full_slice = span.slice(text);
                 const slice = std.mem.trim(u8, full_slice, " \t\r\n");
                 if (slice.len > 0) {
@@ -97,9 +103,21 @@ pub fn layout(
                     }
                 }
                 switch (tag.id) {
-                    .body => in_body = true,
                     .script => in_script = true,
                     .h1 => try state_stack.append(allocator, .{ .font_size = 32 }),
+                    .svg => {
+                        const svg_start_node = dom_node_index;
+                        find_svg_end_loop:
+                        while (true) {
+                            dom_node_index += 1;
+                            switch (dom_nodes[dom_node_index]) {
+                                .end_tag => |id| if (id == .svg) break :find_svg_end_loop,
+                                else => {},
+                            }
+                        }
+                        try nodes.append(allocator, .{ .svg = .{ .start_dom_node = svg_start_node } });
+                    },
+                    .div => {},
                     else => std.log.info("TODO: layout handle <{s}>", .{@tagName(tag.id)}),
                 }
             },
@@ -112,9 +130,11 @@ pub fn layout(
                     }
                 }
                 switch (id) {
-                    .body => in_body = false,
+                    .body => break :body_loop,
                     .script => in_script = false,
                     .h1 => pop(StackState, &state_stack),
+                    .svg => unreachable, // should be impossible
+                    .div => {},
                     else => std.log.info("TODO: layout handle </{s}>", .{@tagName(id)}),
                 }
             },

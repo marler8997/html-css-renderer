@@ -7,6 +7,8 @@ const Token = HtmlTokenizer.Token;
 const htmlid = @import("htmlid.zig");
 const TagId = htmlid.TagId;
 const AttrId = htmlid.AttrId;
+const SvgTagId = htmlid.SvgTagId;
+const SvgAttrId = htmlid.SvgAttrId;
 
 const htmlidmaps = @import("htmlidmaps.zig");
 
@@ -104,23 +106,20 @@ pub fn isVoidElement(id: TagId) bool {
     };
 }
 
-fn lookupTagIgnoreCase(name: []const u8) ?TagId {
+fn lookupIdIgnoreCase(comptime map_namespace: type, name: []const u8) ?map_namespace.Enum {
     // need enough room for the max tag name
     var buf: [20]u8 = undefined;
     if (name.len > buf.len) return null;
     for (name) |c, i| {
         buf[i] = std.ascii.toLower(c);
     }
-    return htmlidmaps.tag_id_map.get(buf[0 .. name.len]);
+    return map_namespace.map.get(buf[0 .. name.len]);
+}
+fn lookupTagIgnoreCase(name: []const u8) ?TagId {
+    return lookupIdIgnoreCase(htmlidmaps.tag, name);
 }
 fn lookupAttrIgnoreCase(name: []const u8) ?AttrId {
-    // need enough room for the max attr name
-    var buf: [20]u8 = undefined;
-    if (name.len > buf.len) return null;
-    for (name) |c, i| {
-        buf[i] = std.ascii.toLower(c);
-    }
-    return htmlidmaps.attr_id_map.get(buf[0 .. name.len]);
+    return lookupIdIgnoreCase(htmlidmaps.attr, name);
 }
 
 pub const Node = union(enum) {
@@ -227,9 +226,6 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
             span: HtmlTokenizer.Span,
         },
         in_tag: InTag,
-        in_svg: struct {
-            start_tag_index: usize,
-        },
         pub const InTag = struct {
             parent_tag_index: usize,
             start_tag_index: usize,
@@ -274,14 +270,10 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                         default_state.start_tag_index
                     else
                         nodes.items.len - 1;
-                    if (id == .svg) {
-                        state = .{ .in_svg = .{ .start_tag_index = next_start_tag_index } };
-                    } else {
-                        state = .{ .in_tag = .{
-                            .parent_tag_index = default_state.start_tag_index,
-                            .start_tag_index = next_start_tag_index,
-                        } };
-                    }
+                    state = .{ .in_tag = .{
+                        .parent_tag_index = default_state.start_tag_index,
+                        .start_tag_index = next_start_tag_index,
+                    } };
                 },
                 .end_tag => |name_raw_span| {
                     const name_raw = name_raw_span.slice(content);
@@ -370,10 +362,6 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                 }},
                 else => std.debug.panic("todo handle token {}", .{token})
             }
-        },
-        .in_svg => |tag_state| {
-            _ = tag_state;
-            std.debug.panic("todo: handle svg", .{});
         },
     };
 

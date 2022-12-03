@@ -368,6 +368,9 @@ fn render(
             );
             try send(sock, msg[0 .. x11.image_text8.getLen(text_len)]);
         },
+        .svg => {
+            std.log.warn("TODO: render svg!", .{});
+        },
     };
 }
 

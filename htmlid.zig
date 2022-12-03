@@ -11,6 +11,9 @@ pub const TagId = enum {
     strong, style, sub, summary, sup, svg,
     table, tbody, td, template, textarea, tfoot, th, thead, time, title, tr, track, tt,
     u, ul, @"var", video, wbr,
+
+    // SVG IDs (maybe this should be its own type?)
+    circle, line, path, polygon, polyline,
 };
 pub const AttrId = enum {
     accept, @"accept-charset", accesskey, action, @"align", alt, as, @"async", autocomplete, autofocus, autoplay,
@@ -29,5 +32,19 @@ pub const AttrId = enum {
     ontimeupdate, ontoggle, onunload, onvolumechange, onwaiting, onwheel, open, optimum, pattern,
     placeholder, poster, preload, readonly, rel, required, reversed, rows, rowspan,
     sandbox, scope, selected, shape, size, sizes, span, spellcheck, src, srcdoc, srclang, srcset,
-    start, step, style, tabindex, target, title, translate, type, usemap, value, width, wrap
+    start, step, style, tabindex, target, title, translate, type, usemap, value, width, wrap,
+
+    // SVG IDs (maybe this should be its own type?)
+    @"alignment-baseline", @"baseline-shift", clip, @"clip-path", @"clip-rule",
+    @"color-interpolation", @"color-interpolation-filters", @"color-profile", @"color-rendering",
+    cursor, cx, cy, d, direction, display, @"dominant-baseline", @"enable-background", fill, @"fill-opacity",
+    @"fill-rule", filter, @"flood-color", @"flood-opacity", @"font-family", @"font-size", @"font-size-adjust",
+    @"font-stretch", @"font-style", @"font-variant", @"font-weight", @"glyph-orientation-horizontal",
+    @"glyph-orientation-vertical", @"image-rendering", kerning, @"letter-spacing", @"lighting-color",
+    @"marker-end", @"marker-mid", @"marker-start", mask, opacity, overflow, @"pointer-events", points, r,
+    @"shape-rendering", @"solid-color", @"solid-opacity", @"stop-color", @"stop-opacity", stroke,
+    @"stroke-dasharray", @"stroke-dashoffset", @"stroke-linecap", @"stroke-linejoin", @"stroke-miterlimit",
+    @"stroke-opacity", @"stroke-width", @"text-anchor", @"text-decoration", @"text-rendering", transform,
+    @"unicode-bidi", @"vector-effect", viewBox, visibility, @"word-spacing", @"writing-mode",
+    x1, x2, xmlns, y1, y2,
 };
