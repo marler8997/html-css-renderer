@@ -17,14 +17,6 @@ pub fn build(b: *std.build.Builder) void {
         exe.install();
     }
 
-    {
-        const exe = b.addExecutable("playground", "playground.zig");
-        exe.step.dependOn(&gen_id_maps.step);
-        exe.setTarget(target);
-        exe.setBuildMode(mode);
-        exe.install();
-    }
-
     const zigx_repo = GitRepoStep.create(b, .{
         .url = "https://github.com/marler8997/zigx",
         .branch = null,

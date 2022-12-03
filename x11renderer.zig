@@ -82,7 +82,7 @@ pub fn main() !u8 {
     };
     alext.unmanaged.finalize(dom.Node, &nodes, global_arena.allocator());
 
-    //try @import("render.zig").dump(content, nodes);
+    //try dom.dump(content, nodes);
     return try renderNodes(content, nodes.items);
 }
 

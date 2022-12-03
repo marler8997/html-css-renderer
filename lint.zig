@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
-
-const HtmlTokenizer = @import("HtmlTokenizer.zig");
+const dom = @import("dom.zig");
+const alext = @import("alext.zig");
 
 pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
@@ -46,49 +46,43 @@ pub fn main() !u8 {
         }
         break :blk all_args[0 .. non_option_len];
     };
-    for (args) |arg| {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-        defer arena.deinit();
-
-        const filename = std.mem.span(arg);
-
-        const content = blk: {
-            var file = std.fs.cwd().openFile(filename, .{}) catch |err| {
-                std.log.err("failed to open '{s}' with {s}", .{filename, @errorName(err)});
-                return 0xff;
-            };
-            defer file.close();
-            break :blk try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize));
-        };
-
-        var tokenizer = HtmlTokenizer.init(content);
-        while (try tokenizer.next()) |token| {
-            switch (token) {
-                .doctype => |d| {
-                    const name = if (d.name_raw) |n| n.slice(content) else "<none>";
-                    std.log.info("Doctype: name={s}", .{name});
-                },
-                .start_tag => |name_span_raw| {
-                    std.log.info("StartTag: name={s}", .{name_span_raw.slice(content)});
-                },
-                .end_tag => |name_span_raw| {
-                    std.log.info("EndTag: name={s}", .{name_span_raw.slice(content)});
-                },
-                .attr => |a| {
-                    const value = if (a.value_raw) |v| v.slice(content) else "<none>";
-                    std.log.info("    Attr: name={s} value='{s}'", .{a.name_raw.slice(content), value});
-                },
-                .start_tag_self_closed =>  {
-                    std.log.info("StartTagSelfClosed", .{});
-                },
-                .char => |t| {
-                    std.log.info("Char: '{}'", .{std.zig.fmtEscapes(t.slice(content))});
-                },
-                else => |t| {
-                    std.log.info("{}", .{t});
-                },
-            }
-        }
+    if (args.len != 1) {
+        try std.io.getStdErr().writer().writeAll("Usage: lint FILE\n");
+        return 0xff;
     }
+    const filename = std.mem.span(args[0]);
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const content = blk: {
+        var file = std.fs.cwd().openFile(filename, .{}) catch |err| {
+            std.log.err("failed to open '{s}' with {s}", .{filename, @errorName(err)});
+            return 0xff;
+        };
+        defer file.close();
+        break :blk try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize));
+    };
+
+    var parse_context = ParseContext{ .filename = filename };
+    var nodes = dom.parse(arena.allocator(), content, .{
+        .context = &parse_context,
+        .on_error = onParseError,
+    }) catch |err| switch (err) {
+        error.ReportedParseError => return 0xff,
+        else => |e| return e,
+    };
+    alext.unmanaged.finalize(dom.Node, &nodes, arena.allocator());
+    try dom.dump(content, nodes.items);
     return 0;
+}
+
+const ParseContext = struct {
+    filename: []const u8,
+};
+
+fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
+    const context = @intToPtr(*ParseContext, @ptrToInt(context_ptr));
+    std.io.getStdErr().writer().print("{s}: parse error: {s}\n", .{context.filename, msg}) catch |err|
+        std.debug.panic("failed to print parse error with {s}", .{@errorName(err)});
 }
