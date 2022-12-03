@@ -53,7 +53,7 @@ const wasm_env = {
     },
     drawText: function(x, y, font_size, text_ptr, text_len) {
         const text = readStr(global_wasm.memory.buffer, text_ptr, text_len);
-        console.log("drawText " + x + ", " + y + " font_size=" + font_size + ", '" + text + "'");
+        //console.log("drawText " + x + ", " + y + " font_size=" + font_size + ", '" + text + "'");
         global_canvas.font = font_size + 'px sans-serif';
         global_canvas.fillStyle = "black";
         global_canvas.fillText(text, x, y);

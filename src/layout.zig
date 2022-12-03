@@ -42,7 +42,9 @@ pub fn layout(
     var nodes = std.ArrayListUnmanaged(LayoutNode){ };
     errdefer nodes.deinit(allocator);
 
+    // NOTE: we don't needs a stack for these states because they can only go 1 level deep
     var in_body = false;
+    var in_script = false;
 
     var render_cursor = XY(u32) { .x = 0, .y = 0 };
     var current_line_height: ?u32 = null;
@@ -65,7 +67,7 @@ pub fn layout(
             continue;
         }
         switch (node) {
-            .text => |span| {
+            .text => |span| if (in_body and !in_script) {
                 const full_slice = span.slice(text);
                 const slice = std.mem.trim(u8, full_slice, " \t\r\n");
                 if (slice.len > 0) {
@@ -95,8 +97,10 @@ pub fn layout(
                     }
                 }
                 switch (tag.id) {
+                    .body => in_body = true,
+                    .script => in_script = true,
                     .h1 => try state_stack.append(allocator, .{ .font_size = 32 }),
-                    else => std.log.info("todo: handle tag {s}", .{@tagName(tag.id)}),
+                    else => std.log.info("TODO: layout handle <{s}>", .{@tagName(tag.id)}),
                 }
             },
             .end_tag => |id| {
@@ -108,8 +112,10 @@ pub fn layout(
                     }
                 }
                 switch (id) {
+                    .body => in_body = false,
+                    .script => in_script = false,
                     .h1 => pop(StackState, &state_stack),
-                    else => std.log.info("TODO: handle end tag '{s}'", .{@tagName(id)}),
+                    else => std.log.info("TODO: layout handle </{s}>", .{@tagName(id)}),
                 }
             },
             .attr => {},

@@ -163,6 +163,13 @@ fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
     return tokenizer.next();
 }
 
+// The parse should only succeed if the following guarantees are met
+// 1. all "spans" returned contain valid UTF8 sequences
+// 2. all start/end tags are balanced
+// 3. the <body> and <script> tags can only go 1 level deep
+//    this guarantee can make processing the dom simpler because you only need
+//    a single boolean value to tack when you enter or exit one of these tags.
+// 4. there is only 1 <body> tag
 pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) !std.ArrayListUnmanaged(Node) {
     var tokenizer = Tokenizer.init(content);
     var saved_token: ?Token = null;
@@ -229,6 +236,8 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         };
     };
     var state = State{ .default = .{ .start_tag_index = 0 } };
+    var got_body_tag = false;
+    var inside_script_tag = false;
 
     parse_loop:
     while (true) switch (state) {
@@ -243,6 +252,19 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                     const id = lookupTagIgnoreCase(name_raw) orelse
                         return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
                     //std.log.info("DEBUG: <{s}> (start={},void={})", .{@tagName(id), default_state.start_tag_index, isVoidElement(id)});
+                    switch (id) {
+                        .body => {
+                            if (got_body_tag)
+                                return opt.reportError("multiple <body> tags", .{});
+                            got_body_tag = true;
+                        },
+                        .script => {
+                            if (inside_script_tag)
+                                return opt.reportError("recursive <script> tags", .{});
+                            inside_script_tag = true;
+                        },
+                        else => {},
+                    }
                     try nodes.append(allocator, .{ .start_tag = .{
                         .id = id,
                         .parent_index = default_state.start_tag_index,
@@ -272,6 +294,13 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                     };
                     if (start_tag.id != id)
                         return opt.reportError("</{s}> cannot close <{s}>", .{@tagName(id), @tagName(start_tag.id)});
+                    switch (id) {
+                        .script => {
+                            std.debug.assert(inside_script_tag);
+                            inside_script_tag = false;
+                        },
+                        else => {},
+                    }
                     try nodes.append(allocator, .{ .end_tag = id });
                     if (default_state.start_tag_index == 0)
                         break :parse_loop;
