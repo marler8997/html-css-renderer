@@ -13,7 +13,7 @@ pub const TagId = enum {
     u, ul, @"var", video, wbr,
 
     // SVG IDs (maybe this should be its own type?)
-    circle, line, path, polygon, polyline,
+    circle, defs, g, line, path, polygon, polyline, text, tspan, use,
 };
 pub const AttrId = enum {
     accept, @"accept-charset", accesskey, action, @"align", alt, as, @"async", autocomplete, autofocus, autoplay,
@@ -42,9 +42,9 @@ pub const AttrId = enum {
     @"font-stretch", @"font-style", @"font-variant", @"font-weight", @"glyph-orientation-horizontal",
     @"glyph-orientation-vertical", @"image-rendering", kerning, @"letter-spacing", @"lighting-color",
     @"marker-end", @"marker-mid", @"marker-start", mask, opacity, overflow, @"pointer-events", points, r,
-    @"shape-rendering", @"solid-color", @"solid-opacity", @"stop-color", @"stop-opacity", stroke,
+    @"shape-rendering", space, @"solid-color", @"solid-opacity", @"stop-color", @"stop-opacity", stroke,
     @"stroke-dasharray", @"stroke-dashoffset", @"stroke-linecap", @"stroke-linejoin", @"stroke-miterlimit",
     @"stroke-opacity", @"stroke-width", @"text-anchor", @"text-decoration", @"text-rendering", transform,
     @"unicode-bidi", @"vector-effect", viewBox, visibility, @"word-spacing", @"writing-mode",
-    x1, x2, xmlns, y1, y2,
+    x, x1, x2, xmlns, y, y1, y2,
 };

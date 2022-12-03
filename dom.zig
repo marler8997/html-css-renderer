@@ -125,7 +125,7 @@ fn lookupAttrIgnoreCase(name: []const u8) ?AttrId {
 pub const Node = union(enum) {
     start_tag: struct {
         id: TagId,
-        self_closing: bool,
+        //self_closing: bool,
         // TODO: maybe make this a u32?
         parent_index: usize,
     },
@@ -214,7 +214,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
     try nodes.append(allocator, .{.start_tag = .{
         .id = .html,
         .parent_index = 0,
-        .self_closing = false,
+        //.self_closing = false,
     }});
 
     const State = union(enum) {
@@ -264,7 +264,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                     try nodes.append(allocator, .{ .start_tag = .{
                         .id = id,
                         .parent_index = default_state.start_tag_index,
-                        .self_closing = false,
+                        //.self_closing = false,
                     } });
                     const next_start_tag_index = if (isVoidElement(id))
                         default_state.start_tag_index
@@ -354,7 +354,26 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                     try nodes.append(allocator, .{ .attr = .{ .id = id, .value = t.value_raw } });
                 },
                 .start_tag_self_closed => {
-                    nodes.items[tag_state.start_tag_index].start_tag.self_closing = true;
+                    //nodes.items[tag_state.start_tag_index].start_tag.self_closing = true;
+                    //std.log.info("DEBUG: </{s}>", .{@tagName(id)});
+                    const start_tag = switch (nodes.items[tag_state.start_tag_index]) {
+                        .start_tag => |t| t, // not a reference because it will be invalidated after nodes.append
+                        else => unreachable,
+                    };
+                    switch (start_tag.id) {
+                        .script => {
+                            std.debug.assert(inside_script_tag);
+                            inside_script_tag = false;
+                        },
+                        else => {},
+                    }
+                    try nodes.append(allocator, .{ .end_tag = start_tag.id });
+                    if (tag_state.start_tag_index == 0)
+                        break :parse_loop;
+                    //std.log.debug("DEBUG: restoring <{s}>", .{@tagName(nodes.items[start_tag.parent_index].start_tag.id)});
+                    state = .{ .default = .{
+                        .start_tag_index = start_tag.parent_index,
+                    }};
                 },
                 .char => |span| state = .{ .data = .{
                     .start_tag_index = tag_state.start_tag_index,
@@ -388,8 +407,7 @@ pub fn dump(content: []const u8, nodes: []const Node) !void {
     for (nodes) |node| {
         switch (node) {
             .start_tag => |t| {
-                const close: []const u8 = if (t.self_closing) " /" else "";
-                try stdout.print("<{s}{s}>\n", .{@tagName(t.id), close});
+                try stdout.print("<{s}>\n", .{@tagName(t.id)});
             },
             .end_tag => |id| try stdout.print("</{s}>\n", .{@tagName(id)}),
             .attr => |a| {
