@@ -281,7 +281,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                         return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
                     //std.log.info("DEBUG: </{s}>", .{@tagName(id)});
                     const start_tag = switch (nodes.items[default_state.start_tag_index]) {
-                        .start_tag => |*t| t,
+                        .start_tag => |t| t, // not a reference because it will be invalidated after nodes.append
                         else => unreachable,
                     };
                     if (start_tag.id != id)
