@@ -43,7 +43,9 @@ pub fn layout(
     errdefer nodes.deinit(allocator);
 
     var in_body = false;
-    var y: u32 = 0;
+
+    var render_cursor = XY(u32) { .x = 0, .y = 0 };
+    var current_line_height: ?u32 = null;
 
     const StackState = union(enum) {
         font_size: u32,
@@ -75,18 +77,36 @@ pub fn layout(
                         break :blk default_font_size;
                     };
                     try nodes.append(allocator, .{ .text = .{
-                        .x = 0, .y = y, .font_size = font_size, .slice = slice,
+                        .x = render_cursor.x,
+                        .y = render_cursor.y,
+                        .font_size = font_size,
+                        .slice = slice,
                     }});
-                    y += font_size;
+                    render_cursor.x += calcTextWidth(font_size, slice) catch unreachable;
+                    current_line_height = if (current_line_height) |h| std.math.max(font_size, h) else font_size;
                 }
             },
             .start_tag => |tag| {
+                if (dom.defaultDisplayIsBlock(tag.id)) {
+                    if (current_line_height) |h| {
+                        render_cursor.x = 0;
+                        render_cursor.y += h;
+                        current_line_height = null;
+                    }
+                }
                 switch (tag.id) {
                     .h1 => try state_stack.append(allocator, .{ .font_size = 32 }),
                     else => std.log.info("todo: handle tag {s}", .{@tagName(tag.id)}),
                 }
             },
             .end_tag => |id| {
+                if (dom.defaultDisplayIsBlock(id)) {
+                    if (current_line_height) |h| {
+                        render_cursor.x = 0;
+                        render_cursor.y += h;
+                        current_line_height = null;
+                    }
+                }
                 switch (id) {
                     .h1 => pop(StackState, &state_stack),
                     else => std.log.info("TODO: handle end tag '{s}'", .{@tagName(id)}),
@@ -98,3 +118,38 @@ pub fn layout(
 
     return nodes;
 }
+
+fn calcTextWidth(font_size: u32, text: []const u8) !u32 {
+    // just a silly hueristic for now
+    const char_count = try calcCharCount(u32, text);
+    return @floatToInt(u32, @intToFloat(f32, font_size) * 0.48 * @intToFloat(f32, char_count));
+}
+
+fn calcCharCount(comptime T: type, text: []const u8) !T {
+    var count: T = 0;
+    var it = HtmlCharIterator.init(text);
+    while (try it.next()) |_| {
+        count += 1;
+    }
+    return count;
+}
+
+const HtmlCharIterator = struct {
+    text: []const u8,
+    index: usize,
+    pub fn init(text: []const u8) HtmlCharIterator {
+        return .{ .text = text, .index = 0 };
+    }
+    pub fn next(self: *HtmlCharIterator) !?u21 {
+        if (self.index == self.text.len) return null;
+        const len = try std.unicode.utf8CodepointSequenceLength(self.text[0]);
+        if (self.index + len > self.text.len)
+            return error.Utf8TruncatedInput;
+        const c = try std.unicode.utf8Decode(self.text[0 .. len]);
+        if (c == '&') {
+            return error.ImplementCharReference;
+        }
+        self.index += len;
+        return c;
+    }
+};
