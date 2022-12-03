@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-const Tokenizer = @import("Tokenizer.zig");
+const HtmlTokenizer = @import("HtmlTokenizer.zig");
 
 pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
@@ -61,7 +61,7 @@ pub fn main() !u8 {
             break :blk try file.readToEndAlloc(arena.allocator(), std.math.maxInt(usize));
         };
 
-        var tokenizer = Tokenizer.init(content);
+        var tokenizer = HtmlTokenizer.init(content);
         while (try tokenizer.next()) |token| {
             switch (token) {
                 .doctype => |d| {

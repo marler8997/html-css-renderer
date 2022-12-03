@@ -1,7 +1,5 @@
 const builtin = @import("builtin");
 const std = @import("std");
-
-const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
 const alext = @import("alext.zig");
 

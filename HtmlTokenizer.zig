@@ -2,7 +2,7 @@
 /// Implements the state machine described here:
 ///     https://html.spec.whatwg.org/multipage/parsing.html#tokenization
 ///
-const Tokenizer = @This();
+const HtmlTokenizer = @This();
 
 const std = @import("std");
 
@@ -19,7 +19,7 @@ current_input_character: struct {
 const DOCTYPE = "DOCTYPE";
 const form_feed = 0xc;
 
-pub fn init(slice: []const u8) Tokenizer {
+pub fn init(slice: []const u8) HtmlTokenizer {
     return .{
         .start = slice.ptr,
         .limit = slice.ptr + slice.len,
@@ -130,7 +130,7 @@ const State = union(enum) {
     eof: void,
 };
 
-fn consume(self: *Tokenizer) !void {
+fn consume(self: *HtmlTokenizer) !void {
     if (self.ptr == self.limit) {
         self.current_input_character = .{ .len = 0, .val = undefined };
         return;
@@ -142,7 +142,7 @@ fn consume(self: *Tokenizer) !void {
     self.ptr += len;
 }
 
-pub fn next(self: *Tokenizer) !?Token {
+pub fn next(self: *HtmlTokenizer) !?Token {
     //std.log.info("next: offset={}", .{@ptrToInt(self.ptr) - @ptrToInt(self.start)});
     if (self.deferred_token) |t| {
         const token_copy = t;
@@ -156,7 +156,7 @@ pub fn next(self: *Tokenizer) !?Token {
     return result.token;
 }
 
-fn next2(self: *Tokenizer) !?struct {
+fn next2(self: *HtmlTokenizer) !?struct {
     token: Token,
     deferred: ?Token = null,
 } {
@@ -641,7 +641,7 @@ fn next2(self: *Tokenizer) !?struct {
     }
 }
 
-fn nextCharsAre(self: Tokenizer, s: []const u8) bool {
+fn nextCharsAre(self: HtmlTokenizer, s: []const u8) bool {
     return (@ptrToInt(self.ptr) + s.len <= @ptrToInt(self.limit)) and
         std.mem.eql(u8, self.ptr[0 .. s.len], s);
 }

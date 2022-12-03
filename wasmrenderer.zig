@@ -1,5 +1,4 @@
 const std = @import("std");
-const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
 const layout = @import("layout.zig");
 const Styler = layout.Styler;

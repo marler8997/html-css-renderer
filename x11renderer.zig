@@ -4,7 +4,6 @@ const x11 = @import("x11");
 const Memfd = x11.Memfd;
 const ContiguousReadBuffer = x11.ContiguousReadBuffer;
 
-const Tokenizer = @import("Tokenizer.zig");
 const dom = @import("dom.zig");
 const layout = @import("layout.zig");
 const Styler = layout.Styler;

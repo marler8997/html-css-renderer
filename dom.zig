@@ -1,8 +1,8 @@
 // see https://dom.spec.whatwg.org/#nodes
 const std = @import("std");
 
-const Tokenizer = @import("Tokenizer.zig");
-const Token = Tokenizer.Token;
+const HtmlTokenizer = @import("HtmlTokenizer.zig");
+const Token = HtmlTokenizer.Token;
 
 const htmlid = @import("htmlid.zig");
 const TagId = htmlid.TagId;
@@ -133,9 +133,9 @@ pub const Node = union(enum) {
     end_tag: TagId,
     attr: struct {
         id: AttrId,
-        value: ?Tokenizer.Span,
+        value: ?HtmlTokenizer.Span,
     },
-    text: Tokenizer.Span,
+    text: HtmlTokenizer.Span,
 };
 
 const ParseOptions = struct {
@@ -154,7 +154,7 @@ const ParseOptions = struct {
     }
 };
 
-fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
+fn next(tokenizer: *HtmlTokenizer, saved_token: *?Token) !?Token {
     if (saved_token.*) |t| {
         // TODO: is t still valid if we set this to null here?
         saved_token.* = null;
@@ -171,7 +171,7 @@ fn next(tokenizer: *Tokenizer, saved_token: *?Token) !?Token {
 //    a single boolean value to tack when you enter or exit one of these tags.
 // 4. there is only 1 <body> tag
 pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOptions) !std.ArrayListUnmanaged(Node) {
-    var tokenizer = Tokenizer.init(content);
+    var tokenizer = HtmlTokenizer.init(content);
     var saved_token: ?Token = null;
 
     var nodes = std.ArrayListUnmanaged(Node){ };
@@ -224,7 +224,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
         },
         data: struct {
             start_tag_index: usize,
-            span: Tokenizer.Span,
+            span: HtmlTokenizer.Span,
         },
         in_tag: InTag,
         in_svg: struct {
