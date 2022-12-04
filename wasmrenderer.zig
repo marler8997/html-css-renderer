@@ -124,6 +124,7 @@ fn render(
     };
 
     for (layout_nodes.items) |node| switch (node) {
+        .box => {}, // TODO
         .text => |t| {
             js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
         },
