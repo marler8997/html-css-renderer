@@ -5,28 +5,40 @@
 * { margin: 0; padding: 0 }
 html {height: 100%}
 body {
-  min-height: 100%;
-  display: flex;
-  flex-flow: column;
+  height: 100%;
+
+  display: grid;
+  grid-template-rows: fit-content(0) 1fr;
+}
+#InputHeader{
+  padding:8px;
 }
 #RendersDiv {
-  flex-grow: 1;
+  min-height:0;
+  padding:8px;
 
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
 .RenderWithTitleDiv {
+  min-width:0;
+  min-height:0;
+  height: 100%;
+
   display:flex;
-  flex-flow: column;
+  flex-direction: column;
+  align-items: center;
 }
+.RenderDivTitle { display: inline-block; }
 .RenderWrapperDiv {
+  min-height:0;
+  min-width: 0;
+  display:inline-block;
+
   flex-grow: 1;
-  border-top: 1px solid black;
 }
-#CanvasWrapper {
-  border-right: 1px solid black;
-}
-iframe{ border: 0 }
+canvas { border: 1px solid black; }
+iframe { border: 1px solid black; }
 </style>
 <script>
 const wasm_base64 = "<@INSERT_WASM_HERE@>";
@@ -133,13 +145,18 @@ function submitText() {
 }
 
 function updateRenderSizes() {
+    const input_header = document.getElementById("InputHeader");
+    const new_renders_div_height = window.innerHeight - input_header.offsetHeight;
+
     const container = document.getElementById("RendersDiv");
+
     const canvas_wrapper = document.getElementById("CanvasWrapper");
+    const iframe_wrapper = document.getElementById("IframeWrapper");
+
     const size = {
-        x: Math.trunc(Math.floor(container.offsetWidth / 2) - 1),
-        y: Math.trunc(canvas_wrapper.offsetHeight),
+        x: Math.trunc(Math.floor(container.offsetWidth / 2)) - 16,
+        y: Math.trunc(Math.min(canvas_wrapper.offsetHeight, iframe_wrapper.offsetHeight)) - 2,
     };
-    canvas_wrapper.style.width = size.x + "px";
 
     const c = document.getElementById("Canvas");
     c.width = size.x;
@@ -161,10 +178,14 @@ function onWindowResize() {
 }
 window.addEventListener('resize', onWindowResize);
 
-</script>
-</head><body>
+function bodyOnLoad() {
+    updateRenderSizes();
+}
 
-<div>
+</script>
+</head><body onload="bodyOnLoad()">
+
+<header id="InputHeader">
   <form action="#" onsubmit="submitUrl()">
     URL: <input id="UrlInput" type="text">
     <input type="submit">
@@ -173,16 +194,16 @@ window.addEventListener('resize', onWindowResize);
     Text: <textarea id="TextInput" rows="5" cols="40"></textarea>
     <input type="submit">
   </form>
-</div>
+</header>
 <div id="RendersDiv">
   <div class="RenderWithTitleDiv">
-      <h1>Custom Renderer</h1>
+      <h2 class="RenderDivTitle">Custom Renderer</h2>
       <div id="CanvasWrapper" class="RenderWrapperDiv">
           <canvas id="Canvas"></canvas>
       </div>
   </div>
   <div class="RenderWithTitleDiv">
-      <h1>Native Iframe</h1>
+      <h2 class="RenderDivTitle">Native Iframe</h2>
       <div id="IframeWrapper" class="RenderWrapperDiv">
           <iframe id="Iframe"></iframe>
       </div>
