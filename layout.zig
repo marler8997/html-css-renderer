@@ -16,9 +16,14 @@ pub fn XY(comptime T: type) type {
 // content-box-size
 // border-box-size
 
+fn roundedMult(float: f32, int: anytype) @TypeOf(int) {
+    return @floatToInt(@TypeOf(int), @round(float * @intToFloat(f32, int)));
+}
+
+
 pub const StyleSize = union(enum) {
     px: u32,
-    percent: u32,
+    parent_ratio: f32, // represents percentage-based sizes
     content: void,
 };
 pub const Style = struct {
@@ -26,22 +31,31 @@ pub const Style = struct {
     padding: u32, // just 1 value for now
     border: u32, // just 1 value for now
     margin: u32, // just 1 value for now
-    pub fn toBox(self: Style, dom_node: usize, parent_box: usize, parent_content_size: ContentSize) Box {
+    pub fn toBox(
+        self: Style,
+        dom_node: usize,
+        parent_box: usize,
+        parent_content_size: XY(?u32),
+    ) Box {
         return Box{
             .dom_node = dom_node,
             .parent_box = parent_box,
+            .relative_content_pos = .{ .x = 0, .y = 0 },
             .content_size = .{
                 .x = switch (self.size.x) {
                     .px => |p| p,
-                    .percent => parent_content_size.x,
+                    .parent_ratio => |r| if (parent_content_size.x) |x|
+                        roundedMult(r, x) - 2 * self.border else null,
                     .content => null,
                 },
                 .y = switch (self.size.y) {
                     .px => |p| p,
-                    .percent => parent_content_size.y,
+                    .parent_ratio => |r| if (parent_content_size.y) |y|
+                        roundedMult(r, y) - 2 * self.border else null,
                     .content => null,
                 },
             },
+            .style_size = self.size,
             .padding = self.padding,
             .border = self.border,
             .margin = self.margin,
@@ -51,19 +65,30 @@ pub const Style = struct {
 pub const Styler = struct {
 
     html: Style = .{
-        .size = .{ .x = .{ .percent = 100 }, .y = .content },
+        .size = .{ .x = .{ .parent_ratio = 1 }, .y = .content },
         .padding = 0,
         .border = 0,
         .margin = 0,
     },
     body: Style = .{
-        .size = .{ .x = .{ .percent = 100 }, .y = .content },
+        .size = .{ .x = .{ .parent_ratio = 1 }, .y = .content },
         .padding = 0,
         .border = 0,
         .margin = 8,
     },
 
-    pub fn getStyle(self: Styler, dom_nodes: []const dom.Node) Style {
+    // TODO: probably pass in the parent tag dom_node?
+    pub fn getTextStyle(self: Styler) Style {
+        _ = self;
+        std.log.warn("TODO: return correct style for text", .{});
+        return .{
+            .size = .{ .x = .content, .y = .content },
+            .padding = 0,
+            .border = 0,
+            .margin = 0,
+        };
+    }
+    pub fn getTagStyle(self: Styler, dom_nodes: []const dom.Node) Style {
         const tag = switch (dom_nodes[0]) {
             .start_tag => |tag| tag,
             else => unreachable,
@@ -83,7 +108,7 @@ pub const Styler = struct {
             else => {
                 std.log.warn("TODO: return correct style for <{s}>", .{@tagName(tag.id)});
                 if (dom.defaultDisplayIsBlock(tag.id)) return .{
-                    .size = .{ .x = .{ .percent = 100 }, .y = .content },
+                    .size = .{ .x = .{ .parent_ratio = 1 }, .y = .content },
                     .padding = 0,
                     .border = 0,
                     .margin = 0,
@@ -106,15 +131,12 @@ fn pop(comptime T: type, al: *std.ArrayListUnmanaged(T)) void {
     al.items.len -= 1;
 }
 
-const ContentSize = struct {
-    x: ?u32,
-    y: ?u32,
-};
-
 const Box = struct {
-    dom_node: usize, // always a start tag right now
+    dom_node: usize,
     parent_box: usize,
-    content_size: ContentSize,
+    relative_content_pos: XY(?u32),
+    content_size: XY(?u32),
+    style_size: XY(StyleSize),
     padding: u32,
     border: u32,
     margin: u32,
@@ -122,6 +144,7 @@ const Box = struct {
 
 pub const LayoutNode = union(enum) {
     box: Box,
+    end_box: usize,
     text: struct {
         x: u32,
         y: u32,
@@ -132,6 +155,22 @@ pub const LayoutNode = union(enum) {
         start_dom_node: usize,
     },
 };
+
+// Layout Algorithm:
+// ================================================================================
+// We traverse the DOM tree depth first.
+//
+// When we visit a node on our way "down" the tree, we create a box in the "layout" tree.
+//
+// We determine the size/position if possible and continue down the tree.
+// Note that for "tag nodes" that can have children, we could only determine the size/position
+// it's only dependent on the parent node (i.e. `width: 100%`).
+//
+// Before any node returns back up the tree, it must determine its content size.
+//
+// This means that all parent nodes can use their children content sizes to determine its
+// own position/size and reposition all the children.
+//
 pub fn layout(
     allocator: std.mem.Allocator,
     text: []const u8,
@@ -143,17 +182,17 @@ pub fn layout(
     errdefer nodes.deinit(allocator);
 
     {
-        const style = styler.getStyle(dom_nodes);
-        const viewport_content_size = ContentSize{
+        const style = styler.getTagStyle(dom_nodes);
+        var viewport_content_size = XY(?u32){
             .x = viewport_size.x,
             .y = viewport_size.y,
         };
-        try nodes.append(allocator, .{ .box = style.toBox(0, 0, viewport_content_size) });
+        try nodes.append(allocator, .{ .box = style.toBox(0, 0, viewport_content_size)});
     }
+    std.log.info("<html> content size is {?} x {?}", .{nodes.items[0].box.content_size.x, nodes.items[0].box.content_size.y});
 
     var dom_node_index: usize = 0;
 
-    // find the body tag
     find_body_loop:
     while (true) : (dom_node_index += 1) {
         if (dom_node_index == dom_nodes.len) return nodes;
@@ -163,7 +202,7 @@ pub fn layout(
         }
     }
     {
-        const style = styler.getStyle(dom_nodes);
+        const style = styler.getTagStyle(dom_nodes);
         const parent_content_size = nodes.items[0].box.content_size;
         try nodes.append(allocator, .{ .box = style.toBox(dom_node_index, 0, parent_content_size) });
     }
@@ -172,6 +211,7 @@ pub fn layout(
     // NOTE: we don't needs a stack for these states because they can only go 1 level deep
     var in_script = false;
 
+    // TODO: probably remove render_cursor?
     var render_cursor = XY(u32) { .x = 0, .y = 0 };
     var current_line_height: ?u32 = null;
 
@@ -188,7 +228,7 @@ pub fn layout(
             .start_tag => |tag| {
                 std.log.info("DEBUG: layout <{s}>", .{@tagName(tag.id)});
 
-                const style = styler.getStyle(dom_nodes[dom_node_index..]);
+                const style = styler.getTagStyle(dom_nodes[dom_node_index..]);
                 const parent_content_size = nodes.items[parent_box].box.content_size;
                 try nodes.append(allocator, .{ .box = style.toBox(dom_node_index, parent_box, parent_content_size) });
                 parent_box = nodes.items.len - 1;
@@ -223,22 +263,13 @@ pub fn layout(
             .attr => {},
             .end_tag => |id| {
                 std.log.info("DEBUG: layout </{s}>", .{@tagName(id)});
-
-                // content of parent box layout is done, finalize its size
-                {
-                    const parent_box_ref = &nodes.items[parent_box].box;
-                    const dom_node_ref = &dom_nodes[parent_box_ref.dom_node].start_tag;
-                    if (parent_box_ref.content_size.x == null or parent_box_ref.content_size.y == null) {
-                        std.log.info("TODO: finalize parent box size for <{s}>", .{
-                            @tagName(dom_node_ref.id)
-                        });
-                    }
-                    parent_box = parent_box_ref.parent_box;
-                    std.log.info("DEBUG:     restore parent box to <{s}> (index={})", .{
-                        @tagName(dom_nodes[nodes.items[parent_box].box.dom_node].start_tag.id), parent_box,
-                    });
-                }
-
+                endParentBox(text, dom_nodes, nodes.items[parent_box..]);
+                try nodes.append(allocator, .{ .end_box = parent_box });
+                parent_box = nodes.items[parent_box].box.parent_box;
+                std.log.info("DEBUG:     restore parent box to <{s}> (index={})", .{
+                    // all boxes that become "parents" should be start_tags I think?
+                    @tagName(dom_nodes[nodes.items[parent_box].box.dom_node].start_tag.id), parent_box,
+                });
 
                 if (dom.defaultDisplayIsBlock(id)) {
                     if (current_line_height) |h| {
@@ -263,6 +294,8 @@ pub fn layout(
                 const slice = std.mem.trim(u8, full_slice, " \t\r\n");
                 if (slice.len == 0) continue;
 
+                const style = styler.getTextStyle();
+
                 std.log.info("DEBUG: layout text ({} chars)", .{slice.len});
                 const font_size = blk: {
                     var it = revit.reverseIterator(state_stack.items);
@@ -271,19 +304,95 @@ pub fn layout(
                     };
                     break :blk default_font_size;
                 };
+                // TODO: don't ignore style
+                const text_width = calcTextWidth(font_size, slice) catch unreachable;
+                try nodes.append(allocator, .{ .box = .{
+                    .dom_node = dom_node_index,
+                    .parent_box = parent_box,
+                    .relative_content_pos = .{ .x = 0, .y = 0},
+                    .content_size = .{ .x = text_width, .y = font_size },
+                    .style_size = style.size,
+                    .padding = style.padding,
+                    .border = style.border,
+                    .margin = style.margin,
+                }});
+                const this_box_index = nodes.items.len - 1;
                 try nodes.append(allocator, .{ .text = .{
                     .x = render_cursor.x,
                     .y = render_cursor.y,
                     .font_size = font_size,
                     .slice = slice,
                 }});
-                render_cursor.x += calcTextWidth(font_size, slice) catch unreachable;
+                try nodes.append(allocator, .{ .end_box = this_box_index });
+                render_cursor.x += text_width;
                 current_line_height = if (current_line_height) |h| std.math.max(font_size, h) else font_size;
             },
         }
     }
 
     return nodes;
+}
+
+fn endParentBox(
+    text: []const u8,
+    dom_nodes: []const dom.Node,
+    nodes: []LayoutNode,
+) void {
+    _ = text;
+    const parent_box = &nodes[0].box;
+    const dom_node_ref = switch (dom_nodes[parent_box.dom_node]) {
+        .start_tag => |*t| t,
+        // all boxes that become "parents" should be start_tags I think?
+        else => unreachable,
+    };
+//    if (parent_box.content_size.x == null or parent_box.content_size.y == null) {
+//        // !!!
+//        std.log.info("TODO: finalize parent box size for <{s}> width={} height={}", .{
+//            @tagName(dom_node_ref.id),
+//            parent_box.style_size.x,
+//            parent_box.style_size.y,
+//        });
+//    }
+    if (parent_box.content_size.x == null) {
+        std.log.warn("TODO: get content size x for <{s}>", .{@tagName(dom_node_ref.id)});
+        //return error.TodoGetContentSizeX;
+    }
+    if (parent_box.content_size.y == null) {
+        switch (parent_box.style_size.y) {
+            .px => @panic("should be impossible"), // unless this has changed since we set content_size?
+            .parent_ratio => @panic("todo: endParentTag 'parent_ratio' style height"),
+            .content => {
+                var content_height: u32 = 0;
+                var depth: u32 = 0;
+                for (nodes[1..]) |node| {
+                    switch(node) {
+                        .box => |box| {
+                            if (depth == 0) {
+                                if (box.content_size.y) |y| {
+                                    content_height += y + 2 * box.border + 2 * box.margin;
+                                } else switch (box.style_size.y) {
+                                    // I *think* my algorithm guarantees content size MUST be set at this point?
+                                    //.px => @panic("should be impossible"), // unless this has changed since we set content_size?
+                                    //.percent => return error.Todo,
+                                    //.content => {
+                                    else => @panic("here"),
+                                }
+                            }
+                            depth += 1;
+                        },
+                        .end_box => {
+                            depth -= 1;
+                        },
+                        .text => {}, // ignore for now
+                        .svg => {}, // ignore for now
+                    }
+                }
+                std.debug.assert(depth == 0);
+                parent_box.content_size.y = content_height;
+                std.log.info("content height for <{s}> resolved to {}", .{@tagName(dom_node_ref.id), content_height});
+            },
+        }
+    }
 }
 
 fn calcTextWidth(font_size: u32, text: []const u8) !u32 {

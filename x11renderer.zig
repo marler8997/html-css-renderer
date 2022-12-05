@@ -351,6 +351,7 @@ fn render(
 
     for (layout_nodes.items) |node| switch (node) {
         .box => {}, // TODO
+        .end_box => {}, // TODO
         .text => |t| {
             // TODO: handle font slice
             const max_text_len = 255;

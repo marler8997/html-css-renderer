@@ -111,7 +111,7 @@ fn render(
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
-    const layout_nodes = layout.layout(
+    var layout_nodes = layout.layout(
         arena.allocator(),
         html,
         dom_nodes,
@@ -122,9 +122,24 @@ fn render(
         std.log.err("layout failed, error={s}", .{@errorName(err)});
         return;
     };
+    alext.unmanaged.finalize(layout.LayoutNode, &layout_nodes, gpa.allocator());
 
-    for (layout_nodes.items) |node| switch (node) {
-        .box => {}, // TODO
+    var current_box_pos = XY(u32){ .x = 0, .y = 0 };
+    _ = current_box_pos;
+
+    for (layout_nodes.items) |node, node_index| switch (node) {
+        .box => |b| {
+            if (b.content_size.x == null or b.content_size.y == null) {
+                std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
+            } else {
+                //js.strokeRect();
+            }
+        },
+        .end_box => |box_index| {
+            _ = box_index;
+            //const parent_box = layout_nodes.items[box_index].parent_box;
+            //parent_box_content_pos = layout_nodes.items[parent_box].relative_content_pos;
+        },
         .text => |t| {
             js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
         },
