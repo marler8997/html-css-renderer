@@ -40,7 +40,7 @@ pub const Style = struct {
         return Box{
             .dom_node = dom_node,
             .parent_box = parent_box,
-            .relative_content_pos = .{ .x = 0, .y = 0 },
+            .relative_content_pos = .{ .x = null, .y = null },
             .content_size = .{
                 .x = switch (self.size.x) {
                     .px => |p| p,
@@ -309,7 +309,7 @@ pub fn layout(
                 try nodes.append(allocator, .{ .box = .{
                     .dom_node = dom_node_index,
                     .parent_box = parent_box,
-                    .relative_content_pos = .{ .x = 0, .y = 0},
+                    .relative_content_pos = .{ .x = null, .y = null},
                     .content_size = .{ .x = text_width, .y = font_size },
                     .style_size = style.size,
                     .padding = style.padding,
