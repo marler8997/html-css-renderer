@@ -140,16 +140,33 @@ pub const Node = union(enum) {
 const ParseOptions = struct {
     context: ?*anyopaque = null,
     on_error: ?*const fn(context: ?*anyopaque, msg: []const u8) void = null,
-    pub fn reportError(self: ParseOptions, comptime fmt: []const u8, args: anytype) error{ReportedParseError} {
-        const f = self.on_error orelse return error.ReportedParseError;
-        var buf: [300]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, fmt, args) catch {
-            f(self.context, "error message to large to format, the following is its format string");
-            f(self.context, fmt);
-            return error.ReportedParseError;
-        };
-        f(self.context, msg);
+
+    // allows void elements like <hr>, <meta> and <link> to include a trailing slash
+    // i.e. "<hr />"
+    allow_trailing_slash_on_void_elements: bool = true,
+
+    const max_error_message = 300;
+    pub fn reportError2(self: ParseOptions, comptime fmt: []const u8, args: anytype, opt_token: ?Token) error{ReportedParseError} {
+        if (self.on_error) |f| {
+            var buf: [300]u8 = undefined;
+            const prefix_len = blk: {
+                if (opt_token) |t| {
+                    if (t.start()) |start|
+                        break :blk (std.fmt.bufPrint(&buf, "offset={}: ", .{start}) catch unreachable).len;
+                }
+                break :blk 0;
+            };
+            const msg_part = std.fmt.bufPrint(buf[prefix_len..], fmt, args) catch {
+                f(self.context, "error message to large to format, the following is its format string");
+                f(self.context, fmt);
+                return error.ReportedParseError;
+            };
+            f(self.context, buf[0 .. prefix_len + msg_part.len]);
+        }
         return error.ReportedParseError;
+    }
+    pub fn reportError(self: ParseOptions, comptime fmt: []const u8, args: anytype) error{ReportedParseError} {
+        return self.reportError2(fmt, args, null);
     }
 };
 
@@ -225,11 +242,6 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
             start_tag_index: usize,
             span: HtmlTokenizer.Span,
         },
-        in_tag: InTag,
-        pub const InTag = struct {
-            parent_tag_index: usize,
-            start_tag_index: usize,
-        };
     };
     var state = State{ .default = .{ .start_tag_index = 0 } };
     var got_body_tag = false;
@@ -244,11 +256,12 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
             );
             switch (token) {
                 .start_tag => |name_raw_span| {
-                    const name_raw = name_raw_span.slice(content);
-                    const id = lookupTagIgnoreCase(name_raw) orelse
-                        return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(name_raw)});
-                    //std.log.info("DEBUG: <{s}> (start={},void={})", .{@tagName(id), default_state.start_tag_index, isVoidElement(id)});
-                    switch (id) {
+                    const tag_name_raw = name_raw_span.slice(content);
+                    const tag_id = lookupTagIgnoreCase(tag_name_raw) orelse
+                        return opt.reportError("unknown tag '{}'", .{std.zig.fmtEscapes(tag_name_raw)});
+                    const is_void_tag = isVoidElement(tag_id);
+                    //std.log.info("DEBUG: <{s}> (start={},void={})", .{@tagName(tag_id), default_state.start_tag_index, is_void_tag});
+                    switch (tag_id) {
                         .body => {
                             if (got_body_tag)
                                 return opt.reportError("multiple <body> tags", .{});
@@ -262,18 +275,62 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                         else => {},
                     }
                     try nodes.append(allocator, .{ .start_tag = .{
-                        .id = id,
+                        .id = tag_id,
                         .parent_index = default_state.start_tag_index,
                         //.self_closing = false,
-                    } });
-                    const next_start_tag_index = if (isVoidElement(id))
-                        default_state.start_tag_index
-                    else
-                        nodes.items.len - 1;
-                    state = .{ .in_tag = .{
-                        .parent_tag_index = default_state.start_tag_index,
-                        .start_tag_index = next_start_tag_index,
-                    } };
+                    }});
+                    const this_tag_index = nodes.items.len - 1;
+
+                    var tag_closed = is_void_tag;
+
+                    attr_loop:
+                    while (true) {
+                        const next_token = (try next(&tokenizer, &saved_token)) orelse break :attr_loop;
+                        switch (next_token) {
+                            .start_tag_self_closed => if (is_void_tag) {
+                                if (!opt.allow_trailing_slash_on_void_elements)
+                                    return opt.reportError2("cannot self close void element '<{s} />'", .{@tagName(tag_id)}, next_token);
+                            } else {
+                                // TODO: this logic is duplicated from .end_tag, make common if it gets too big!
+                                switch (tag_id) {
+                                    .script => {
+                                        std.debug.assert(inside_script_tag);
+                                        inside_script_tag = false;
+                                    },
+                                    else => {},
+                                }
+                                tag_closed = true;
+                                break :attr_loop;
+                            },
+                            .attr => |attr| {
+                                const attr_name_raw = attr.name_raw.slice(content);
+                                //std.log.info("DEBUG: attr name_raw is '{s}'", .{attr_name_raw});
+                                const id = lookupAttrIgnoreCase(attr_name_raw) orelse {
+                                    if (std.ascii.startsWithIgnoreCase(attr_name_raw, "data-"))
+                                        return opt.reportError("custom attribute '{s}' not supported", .{attr_name_raw});
+                                    return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(attr_name_raw)});
+                                };
+                                // TODO: also process value
+                                try nodes.append(allocator, .{ .attr = .{ .id = id, .value = attr.value_raw } });
+                            },
+                            .doctype, .start_tag, .end_tag, .comment, .char, .parse_error => {
+                                saved_token = next_token;
+                                break :attr_loop;
+                            },
+                        }
+                    }
+
+                    if (tag_closed) {
+                        //std.log.info("DEBUG: </{s}>", .{@tagName(tag_id)});
+                        // TODO: should we append an end_tag node for void elements?
+                        //       it will make the dom processor logic a bit simpler so it
+                        //       will have less runtime code, but, will take up more runtime memory
+                        try nodes.append(allocator, .{ .end_tag = tag_id });
+                    } else if (!tag_closed and !isVoidElement(tag_id)) {
+                        state = .{ .default = .{
+                            .start_tag_index = this_tag_index,
+                        }};
+                    }
                 },
                 .end_tag => |name_raw_span| {
                     const name_raw = name_raw_span.slice(content);
@@ -332,56 +389,6 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                 }};
             }
         },
-        .in_tag => |tag_state| {
-            const token = (try next(&tokenizer, &saved_token)) orelse return error.NotImpl;
-            switch (token) {
-                .start_tag, .end_tag => {
-                    //std.log.info("DEBUG: append <{s}>", .{@tagName(tag_state.id)});
-                    saved_token = token;
-                    state = .{ .default = .{
-                        .start_tag_index = tag_state.start_tag_index,
-                    }};
-                },
-                .attr => |t| {
-                    const name_raw = t.name_raw.slice(content);
-                    //std.log.info("DEBUG: attr name_raw is '{s}'", .{name_raw});
-                    const id = lookupAttrIgnoreCase(name_raw) orelse {
-                        if (std.ascii.startsWithIgnoreCase(name_raw, "data-"))
-                            return opt.reportError("custom attribute '{s}' not supported", .{name_raw});
-                        return opt.reportError("unknown attribute '{}'", .{std.zig.fmtEscapes(name_raw)});
-                    };
-                    // TODO: also process value
-                    try nodes.append(allocator, .{ .attr = .{ .id = id, .value = t.value_raw } });
-                },
-                .start_tag_self_closed => {
-                    //nodes.items[tag_state.start_tag_index].start_tag.self_closing = true;
-                    //std.log.info("DEBUG: </{s}>", .{@tagName(id)});
-                    const start_tag = switch (nodes.items[tag_state.start_tag_index]) {
-                        .start_tag => |t| t, // not a reference because it will be invalidated after nodes.append
-                        else => unreachable,
-                    };
-                    switch (start_tag.id) {
-                        .script => {
-                            std.debug.assert(inside_script_tag);
-                            inside_script_tag = false;
-                        },
-                        else => {},
-                    }
-                    try nodes.append(allocator, .{ .end_tag = start_tag.id });
-                    if (tag_state.start_tag_index == 0)
-                        break :parse_loop;
-                    //std.log.debug("DEBUG: restoring <{s}>", .{@tagName(nodes.items[start_tag.parent_index].start_tag.id)});
-                    state = .{ .default = .{
-                        .start_tag_index = start_tag.parent_index,
-                    }};
-                },
-                .char => |span| state = .{ .data = .{
-                    .start_tag_index = tag_state.start_tag_index,
-                    .span = span,
-                }},
-                else => std.debug.panic("todo handle token {}", .{token})
-            }
-        },
     };
 
     while (try next(&tokenizer, &saved_token)) |token| switch (token) {
@@ -390,7 +397,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
             if (!isWhitespace(slice))
                 return opt.reportError("unexpected data after </html> '{}'", .{std.zig.fmtEscapes(slice)});
         },
-        else => return opt.reportError("unexpected {s} token after </html>", .{@tagName(token)}),
+        else => return opt.reportError2("unexpected {s} token after </html>", .{@tagName(token)}, token),
     };
     return nodes;
 }

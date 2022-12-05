@@ -40,7 +40,7 @@ pub const Token = union(enum) {
     doctype: Doctype,
     start_tag: Span,
     end_tag: Span,
-    start_tag_self_closed: void,
+    start_tag_self_closed: usize,
     attr: struct {
         // NOTE: process the name_raw by replacing
         //     - upper-case ascii alpha with lower case (add 0x20)
@@ -77,6 +77,16 @@ pub const Token = union(enum) {
         //public_id: usize,
         //system_id: usize,
     };
+
+    pub fn start(self: Token) ?usize {
+        return switch (self) {
+            .start_tag => |t| t.start, // todo: subtract 1 for '<'?
+            .end_tag => |t| t.start, // todo: subtract 2 for '</'?
+            .start_tag_self_closed => |s| s,
+            .char => |c| c.start,
+            else => null,
+        };
+    }
 };
 
 const State = union(enum) {
@@ -294,7 +304,10 @@ fn next2(self: *HtmlTokenizer) !?struct {
                 } else switch (self.current_input_character.val) {
                     '>' => {
                         self.state = .data;
-                        return .{ .token = .start_tag_self_closed };
+                        return .{ .token = .{
+                            // TODO: can we assume the start will be 2 bytes back?
+                            .start_tag_self_closed = @ptrToInt(self.ptr) - 2 - @ptrToInt(self.start),
+                        }};
                     },
                     else => {
                         self.state = .before_attribute_name;
