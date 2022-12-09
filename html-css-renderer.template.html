@@ -186,11 +186,11 @@ function bodyOnLoad() {
 </head><body onload="bodyOnLoad()">
 
 <header id="InputHeader">
-  <form action="#" onsubmit="submitUrl()">
+  <form action="#" onsubmit="submitUrl();return false">
     URL: <input id="UrlInput" type="text">
     <input type="submit">
   </form>
-  <form action="#" onsubmit="submitText()">
+  <form action="#" onsubmit="submitText();return false">
     Text: <textarea id="TextInput" rows="5" cols="40"></textarea>
     <input type="submit">
   </form>
