@@ -186,14 +186,14 @@ function bodyOnLoad() {
 </head><body onload="bodyOnLoad()">
 
 <header id="InputHeader">
-  <form action="#" onsubmit="submitUrl();return false">
+  <div>
     URL: <input id="UrlInput" type="text">
-    <input type="submit">
-  </form>
-  <form action="#" onsubmit="submitText();return false">
+    <button onclick="submitUrl()">Submit</button>
+  </div>
+  <div>
     Text: <textarea id="TextInput" rows="5" cols="40"></textarea>
-    <input type="submit">
-  </form>
+    <button onclick="submitText()">Submit</button>
+  </div>
 </header>
 <div id="RendersDiv">
   <div class="RenderWithTitleDiv">
