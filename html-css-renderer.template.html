@@ -63,6 +63,12 @@ const wasm_env = {
         global_canvas.fillStyle = "white";
         global_canvas.fillRect(0, 0, global_canvas_dom.width, global_canvas_dom.height);
     },
+    strokeRgb: function(rgb) {
+        global_canvas.strokeStyle = "#" + rgb.toString(16);
+    },
+    strokeRect: function(x, y, width, height) {
+        global_canvas.strokeRect(x, y, width, height);
+    },
     drawText: function(x, y, font_size, text_ptr, text_len) {
         const text = readStr(global_wasm.memory.buffer, text_ptr, text_len);
         //console.log("drawText " + x + ", " + y + " font_size=" + font_size + ", '" + text + "'");

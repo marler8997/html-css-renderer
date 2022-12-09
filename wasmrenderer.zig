@@ -14,6 +14,8 @@ const js = struct {
     extern fn logFlush() void;
     extern fn initCanvas() void;
     extern fn canvasClear() void;
+    extern fn strokeRgb(rgb: u32) void;
+    extern fn strokeRect(x: u32, y: u32, width: u32, height: u32) void;
     extern fn drawText(x: u32, y: u32, font_size: usize, ptr: [*]const u8, len: usize) void;
 };
 
@@ -124,6 +126,9 @@ fn render(
     };
     alext.unmanaged.finalize(layout.LayoutNode, &layout_nodes, gpa.allocator());
 
+    var next_color_index: usize = 0;
+    var next_no_relative_position_box_y: usize = 200;
+
     var current_box_pos = XY(u32){ .x = 0, .y = 0 };
     _ = current_box_pos;
 
@@ -132,7 +137,36 @@ fn render(
             if (b.content_size.x == null or b.content_size.y == null) {
                 std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
             } else {
-                //js.strokeRect();
+                js.strokeRgb(unique_colors[next_color_index]);
+                next_color_index = (next_color_index + 1) % unique_colors.len;
+
+                // TODO: the x/y aren't right here yet
+                const x = b.relative_content_pos.x orelse 0;
+                const y = blk: {
+                    if (b.relative_content_pos.y) |y| break :blk y;
+                    const y = next_no_relative_position_box_y;
+                    next_no_relative_position_box_y += b.content_size.y.? + 5;
+                    break :blk y;
+                };
+                js.strokeRect(x, y, b.content_size.x.?, b.content_size.y.?);
+                {
+                    var text_buf: [300]u8 = undefined;
+                    const msg = std.fmt.bufPrint(
+                        &text_buf,
+                        "box index={} {s} {}x{}", .{
+                            node_index,
+                            switch (dom_nodes[b.dom_node]) {
+                                .start_tag => |t| @tagName(t.id),
+                                .text => @as([]const u8, "text"),
+                                else => unreachable,
+                            },
+                            b.content_size.x.?,
+                            b.content_size.y.?,
+                        },
+                    ) catch unreachable;
+                    const font_size = 10;
+                    js.drawText(x + 1, y + 1 + font_size, font_size, msg.ptr, msg.len);
+                }
             }
         },
         .end_box => |box_index| {
@@ -156,6 +190,12 @@ fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
     const context = @intToPtr(*ParseContext, @ptrToInt(context_ptr));
     std.log.err("{s}: parse error: {s}", .{context.name, msg});
 }
+
+var unique_colors = [_]u32 {
+    0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0,
+    0xf032e6, 0xbcf60c, 0xfabebe, 0x008080, 0xe6beff, 0x9a6324, 0xfffac8,
+    0x800000, 0xaaffc3, 0x808000, 0xffd8b1, 0x000075, 0x808080,
+};
 
 const JsLogWriter = std.io.Writer(void, error{}, jsLogWrite);
 fn jsLogWrite(context: void, bytes: []const u8) !usize {
