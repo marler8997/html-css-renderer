@@ -6,6 +6,7 @@ const ContiguousReadBuffer = x11.ContiguousReadBuffer;
 
 const dom = @import("dom.zig");
 const layout = @import("layout.zig");
+const XY = layout.XY;
 const Styler = layout.Styler;
 const alext = @import("alext.zig");
 
@@ -354,9 +355,14 @@ fn render(
 
     for (layout_nodes.items) |node, node_index| switch (node) {
         .box => |b| {
-            if (b.content_size.x == null or b.content_size.y == null) {
+            if (b.content_size.x.getResolved() == null or b.content_size.y.getResolved() == null) {
                 std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
             } else {
+                const content_size = XY(u32){
+                    .x = b.content_size.x.getResolved().?,
+                    .y = b.content_size.y.getResolved().?,
+                };
+
                 try changeGcColor(sock, fg_gc_id, unique_colors[next_color_index], 0xffffff);
                 next_color_index = (next_color_index + 1) % unique_colors.len;
                 // TODO: the x/y aren't right here yet
@@ -364,14 +370,14 @@ fn render(
                 const y = @intCast(i16, blk: {
                     if (b.relative_content_pos.y) |y| break :blk y;
                     const y = next_no_relative_position_box_y;
-                    next_no_relative_position_box_y += b.content_size.y.? + 5;
+                    next_no_relative_position_box_y += content_size.y + 5;
                     break :blk y;
                 });
                 {
                     const rectangles = [_]x11.Rectangle{.{
                         .x = x, .y = y,
-                        .width = @intCast(u16, b.content_size.x.?),
-                        .height = @intCast(u16, b.content_size.y.?),
+                        .width = @intCast(u16, content_size.x),
+                        .height = @intCast(u16, content_size.y),
                     }};
                     var msg: [x11.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
                     x11.poly_rectangle.serialize(&msg, .{
@@ -392,8 +398,8 @@ fn render(
                                 .text => @as([]const u8, "text"),
                                 else => unreachable,
                             },
-                            b.content_size.x.?,
-                            b.content_size.y.?,
+                            content_size.x,
+                            content_size.y,
                         },
                     ) catch unreachable;
                     const text_len = @intCast(u8, msg.len);

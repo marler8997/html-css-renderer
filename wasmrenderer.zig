@@ -134,9 +134,14 @@ fn render(
 
     for (layout_nodes.items) |node, node_index| switch (node) {
         .box => |b| {
-            if (b.content_size.x == null or b.content_size.y == null) {
+            if (b.content_size.x.getResolved() == null or b.content_size.y.getResolved() == null) {
                 std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
             } else {
+                const content_size = XY(u32){
+                    .x = b.content_size.x.getResolved().?,
+                    .y = b.content_size.y.getResolved().?,
+                };
+
                 js.strokeRgb(unique_colors[next_color_index]);
                 next_color_index = (next_color_index + 1) % unique_colors.len;
 
@@ -145,10 +150,10 @@ fn render(
                 const y = blk: {
                     if (b.relative_content_pos.y) |y| break :blk y;
                     const y = next_no_relative_position_box_y;
-                    next_no_relative_position_box_y += b.content_size.y.? + 5;
+                    next_no_relative_position_box_y += content_size.y + 5;
                     break :blk y;
                 };
-                js.strokeRect(x, y, b.content_size.x.?, b.content_size.y.?);
+                js.strokeRect(x, y, content_size.x, content_size.y);
                 {
                     var text_buf: [300]u8 = undefined;
                     const msg = std.fmt.bufPrint(
@@ -160,8 +165,8 @@ fn render(
                                 .text => @as([]const u8, "text"),
                                 else => unreachable,
                             },
-                            b.content_size.x.?,
-                            b.content_size.y.?,
+                            content_size.x,
+                            content_size.y,
                         },
                     ) catch unreachable;
                     const font_size = 10;
