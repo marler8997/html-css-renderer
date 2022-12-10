@@ -365,13 +365,16 @@ fn render(
 
                 try changeGcColor(sock, fg_gc_id, unique_colors[next_color_index], 0xffffff);
                 next_color_index = (next_color_index + 1) % unique_colors.len;
-                // TODO: the x/y aren't right here yet
-                const x = @intCast(i16, b.relative_content_pos.x orelse 0);
+                std.log.info("x/y={}/{}", .{b.relative_content_pos.x, b.relative_content_pos.y});
+                const x = @intCast(i16, b.relative_content_pos.x);
+                const explode_view = true;
                 const y = @intCast(i16, blk: {
-                    if (b.relative_content_pos.y) |y| break :blk y;
-                    const y = next_no_relative_position_box_y;
-                    next_no_relative_position_box_y += content_size.y + 5;
-                    break :blk y;
+                    if (explode_view) {
+                        const y = next_no_relative_position_box_y;
+                        next_no_relative_position_box_y += content_size.y + 5;
+                        break :blk y;
+                    }
+                    break :blk b.relative_content_pos.y;
                 });
                 {
                     const rectangles = [_]x11.Rectangle{.{
@@ -415,23 +418,24 @@ fn render(
         }, // TODO
         .end_box => {}, // TODO
         .text => |t| {
+            _ = t;
             // TODO: handle font slice
-            const max_text_len = 255;
-            const text_len = std.math.cast(u8, t.slice.len) orelse max_text_len;
-
-            try changeGcColor(sock, fg_gc_id, 0x111111, 0xffffff);
-            var msg: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
-            x11.image_text8.serialize(
-                &msg,
-                x11.Slice(u8, [*]const u8){ .ptr = t.slice.ptr, .len = text_len },
-                .{
-                    .drawable_id = drawable_id,
-                    .gc_id = fg_gc_id,
-                    .x = @intCast(i16, t.x),
-                    .y = @intCast(i16, t.y) + font_dims.font_ascent,
-                },
-            );
-            try send(sock, msg[0 .. x11.image_text8.getLen(text_len)]);
+//            const max_text_len = 255;
+//            const text_len = std.math.cast(u8, t.slice.len) orelse max_text_len;
+//
+//            try changeGcColor(sock, fg_gc_id, 0x111111, 0xffffff);
+//            var msg: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
+//            x11.image_text8.serialize(
+//                &msg,
+//                x11.Slice(u8, [*]const u8){ .ptr = t.slice.ptr, .len = text_len },
+//                .{
+//                    .drawable_id = drawable_id,
+//                    .gc_id = fg_gc_id,
+//                    .x = @intCast(i16, t.x),
+//                    .y = @intCast(i16, t.y) + font_dims.font_ascent,
+//                },
+//            );
+//            try send(sock, msg[0 .. x11.image_text8.getLen(text_len)]);
         },
         .svg => {
             std.log.warn("TODO: render svg!", .{});

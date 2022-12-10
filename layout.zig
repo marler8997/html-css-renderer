@@ -117,7 +117,7 @@ pub const Styler = struct {
         return Box{
             .dom_node = dom_node_index,
             .parent_box = parent_box,
-            .relative_content_pos = .{ .x = null, .y = null },
+            .relative_content_pos = undefined,
             .content_size = XY(ContentSize){
                 .x = switch (style_size.x) {
                     .px => |p| .{ .resolved = p },
@@ -164,14 +164,14 @@ pub const Styler = struct {
         }
     }
 
-    pub fn getFontSize(self: Styler, dom_nodes: []const dom.Node, node_index: usize) ?u32 {
+    pub fn getFont(self: Styler, dom_nodes: []const dom.Node, node_index: usize) ?Font {
         _ = self;
         switch (dom_nodes[node_index]) {
             .start_tag => |tag| {
                 switch (tag.id) {
                     .h1 => {
                         std.log.warn("returning hardcoded font size {} for h1", .{default_font_size*2});
-                        return default_font_size * 2;
+                        return .{ .size = default_font_size * 2 };
                     },
                     else => {},
                 }
@@ -216,7 +216,7 @@ const ContentSize = union(enum) {
 const Box = struct {
     dom_node: usize,
     parent_box: usize,
-    relative_content_pos: XY(?u32),
+    relative_content_pos: XY(u32),
     content_size: XY(ContentSize),
     mbp: MarginBorderPadding,
 };
@@ -225,10 +225,8 @@ pub const LayoutNode = union(enum) {
     box: Box,
     end_box: usize,
     text: struct {
-        x: u32,
-        y: u32,
-        font_size: u32,
         slice: []const u8,
+        relative_content_pos: XY(u32),
     },
     svg: struct {
         start_dom_node: usize,
@@ -266,6 +264,7 @@ pub fn layout(
             .y = .{ .resolved = viewport_size.y },
         };
         try nodes.append(allocator, .{ .box = styler.getBox(dom_nodes, 0, std.math.maxInt(usize), viewport_content_size)});
+        nodes.items[0].box.relative_content_pos = .{ .x = 0, .y = 0 };
     }
     std.log.info("<html> content size is {} x {}", .{nodes.items[0].box.content_size.x, nodes.items[0].box.content_size.y});
 
@@ -289,10 +288,6 @@ pub fn layout(
     // NOTE: we don't needs a stack for these states because they can only go 1 level deep
     var in_script = false;
 
-    // TODO: probably remove render_cursor?
-    var render_cursor = XY(u32) { .x = 0, .y = 0 };
-    var current_line_height: ?u32 = null;
-
     var parent_box: usize = 1;
 
     body_loop:
@@ -300,7 +295,6 @@ pub fn layout(
         const dom_node = &dom_nodes[dom_node_index];
         switch (dom_node.*) {
             .start_tag => |tag| {
-                //const style = styler.getTagStyle(dom_nodes[dom_node_index..]);
                 const parent_content_size = nodes.items[parent_box].box.content_size;
                 try nodes.append(allocator, .{ .box = styler.getBox(dom_nodes, dom_node_index, parent_box, parent_content_size) });
                 std.log.info("<{s}> content size is {?} x {?}", .{
@@ -310,14 +304,6 @@ pub fn layout(
                 });
                 parent_box = nodes.items.len - 1;
 
-                // TODO: this is old, probably remove this
-                if (dom.defaultDisplayIsBlock(tag.id)) {
-                    if (current_line_height) |h| {
-                        render_cursor.x = 0;
-                        render_cursor.y += h;
-                        current_line_height = null;
-                    }
-                }
                 switch (tag.id) {
                     .script => in_script = true,
                     .svg => {
@@ -332,14 +318,13 @@ pub fn layout(
                         }
                         try nodes.append(allocator, .{ .svg = .{ .start_dom_node = svg_start_node } });
                     },
-                    .div => {},
-                    else => std.log.info("TODO: layout handle <{s}>", .{@tagName(tag.id)}),
+                    else => {},
                 }
             },
             .attr => {},
             .end_tag => |id| {
                 std.log.info("DEBUG: layout </{s}>", .{@tagName(id)});
-                endParentBox(text, dom_nodes, styler, nodes.items[parent_box..]);
+                endParentBox(text, dom_nodes, styler, nodes.items, parent_box);
                 try nodes.append(allocator, .{ .end_box = parent_box });
                 parent_box = nodes.items[parent_box].box.parent_box;
                 if (parent_box == std.math.maxInt(usize))
@@ -348,19 +333,10 @@ pub fn layout(
                     // all boxes that become "parents" should be start_tags I think?
                     @tagName(dom_nodes[nodes.items[parent_box].box.dom_node].start_tag.id), parent_box,
                 });
-
-                if (dom.defaultDisplayIsBlock(id)) {
-                    if (current_line_height) |h| {
-                        render_cursor.x = 0;
-                        render_cursor.y += h;
-                        current_line_height = null;
-                    }
-                }
                 switch (id) {
                     .script => in_script = false,
                     .svg => unreachable, // should be impossible
-                    .div => {},
-                    else => std.log.info("TODO: layout handle </{s}>", .{@tagName(id)}),
+                    else => {},
                 }
             },
             .text => |span| {
@@ -369,19 +345,10 @@ pub fn layout(
                 const full_slice = span.slice(text);
                 const slice = std.mem.trim(u8, full_slice, " \t\r\n");
                 if (slice.len == 0) continue;
-
-                const font_size = getFontSize(dom_nodes, styler, nodes.items, parent_box);
-                // TODO: we don't need to get the text_width here, do that when the parent box is resolving
-                const text_width = calcTextWidth(font_size, slice) catch unreachable;
-                std.log.info("DEBUG: layout text byte_len={} font_size={} width={}", .{slice.len, font_size, text_width});
                 try nodes.append(allocator, .{ .text = .{
-                    .x = render_cursor.x,
-                    .y = render_cursor.y,
-                    .font_size = font_size,
                     .slice = slice,
+                    .relative_content_pos = undefined,
                 }});
-                render_cursor.x += text_width;
-                current_line_height = if (current_line_height) |h| std.math.max(font_size, h) else font_size;
             },
         }
     }
@@ -389,16 +356,23 @@ pub fn layout(
     return nodes;
 }
 
-fn getFontSize(dom_nodes: []const dom.Node, styler: Styler, nodes: []LayoutNode, first_parent_box: usize) u32 {
+fn resolveFont(opt_font: *?Font, dom_nodes: []const dom.Node, styler: Styler, nodes: []LayoutNode, first_parent_box: usize) Font {
+    if (opt_font.* == null) {
+        opt_font.* = getFont(dom_nodes, styler, nodes, first_parent_box);
+    }
+    return opt_font.*.?;
+}
+
+fn getFont(dom_nodes: []const dom.Node, styler: Styler, nodes: []LayoutNode, first_parent_box: usize) Font {
     std.debug.assert(nodes.len > 0);
     var it = layoutParentIterator(nodes[0 .. first_parent_box + 1]);
     while (it.next()) |parent_box| {
         //std.log.info("   parent it '{s}'", .{@tagName(dom_nodes[parent_box.dom_node].start_tag.id)});
-        if (styler.getFontSize(dom_nodes, parent_box.dom_node)) |font_size| {
-            return font_size;
+        if (styler.getFont(dom_nodes, parent_box.dom_node)) |font| {
+            return font;
         }
     }
-    return default_font_size;
+    return .{ .size = default_font_size };
 }
 
 fn endParentBox(
@@ -406,9 +380,10 @@ fn endParentBox(
     dom_nodes: []const dom.Node,
     styler: Styler,
     nodes: []LayoutNode,
+    parent_box_index: usize,
 ) void {
     _ = text;
-    const parent_box = switch (nodes[0]) {
+    const parent_box = switch (nodes[parent_box_index]) {
         .box => |*b| b,
         else => unreachable,
     };
@@ -420,53 +395,215 @@ fn endParentBox(
 
     if (parent_box.content_size.x.getResolved() == null or parent_box.content_size.y.getResolved() == null) {
 
-        // TODO:
-        const style_size_y = styler.getSizeY(dom_nodes[parent_box.dom_node..]);
-        //const mbp = styler.getMarginBorderPadding(dom_nodes[parent_box.dom_node..]);
-
-        switch (style_size_y) {
-            .px => @panic("should be impossible"), // unless this has changed since we set content_size?
-            .parent_ratio => @panic("todo: endParentTag 'parent_ratio' style height"),
-            .content => {
-                var content_height: u32 = 2 * parent_box.mbp.margin + 2 * parent_box.mbp.border + 2 * parent_box.mbp.padding;
-                var it = directChildIterator(nodes);
-                while (it.next()) |node| {
-                    switch(node.*) {
-                        .box => |box| {
-                            // I *think* my algorithm guarantees content size MUST be set at this point?
-                            const y = box.content_size.y.getResolved() orelse unreachable;
-                            // TODO: we only add the content height if this box is on its own line
-                            //       we could maybe use display:block, but display:block might just translate
-                            //       to witdh:100% so we might just be able to look at the width?
-                            content_height += y + 2 * box.mbp.border + 2 * box.mbp.margin;
-                        },
-                        .end_box => unreachable, // should be impossible
-                        .text => {
-
-                        }, // ignore for now
-                        .svg => {}, // ignore for now
-                    }
-                }
-                parent_box.content_size.y = .{ .resolved = content_height };
-                std.log.info("content height for <{s}> resolved to {}", .{@tagName(dom_node_ref.id), content_height});
-            },
+        const content_size_x = parent_box.content_size.x.getResolved() orelse {
+            std.log.err("TODO: not having a resolved width is not implemented", .{});
+            @panic("todo");
+        };
+        if (2 * parent_box.mbp.padding >= content_size_x) {
+            std.log.err("TODO: no room for content", .{});
+            @panic("todo");
         }
+        const padded_content_size_x = content_size_x - 2 * parent_box.mbp.padding;
+
+        var pos_y: u32 = parent_box.mbp.padding;
+        const CurrentLine = struct {
+            x: u32,
+            max_height: u32,
+        };
+        var opt_current_line: ?CurrentLine = null;
+        var cached_font: ?Font = null;
+
+        var content_height: u32 = 2 * parent_box.mbp.margin + 2 * parent_box.mbp.border + 2 * parent_box.mbp.padding;
+        var child_it = directChildIterator(nodes[parent_box_index..]);
+        while (child_it.next()) |node_ref| {
+            switch(node_ref.*) {
+                .box => |*box| {
+                    const box_content_size = XY(u32) {
+                        // My algorithm should guarantee that content size MUST be set at this point
+                        .x = box.content_size.x.getResolved().?,
+                        .y = box.content_size.y.getResolved().?,
+                    };
+
+                    // TODO: does this box go on the current line or the next line
+                    if (opt_current_line) |line| {
+                        _ = line;
+                        std.log.err("TODO: handle box when we have already started the line", .{});
+                        @panic("todo");
+                    }
+
+                    box.relative_content_pos = .{
+                        .x = parent_box.mbp.padding + box.mbp.margin + box.mbp.border,
+                        .y = pos_y + box.mbp.margin + box.mbp.border,
+                    };
+
+                    content_height += box_content_size.y;
+                    content_height += box.mbp.border + box.mbp.margin;
+
+                    // if is block element
+                    if (dom.defaultDisplayIsBlock(dom_nodes[box.dom_node].start_tag.id)) {
+                        opt_current_line = null;
+                    } else {
+                        std.log.err("TODO: update the current line", .{});
+                    }
+                },
+                .end_box => unreachable, // should be impossible
+                .text => |*text_node| {
+                    text_node.relative_content_pos = .{
+                        .x = parent_box.mbp.padding,
+                        .y = pos_y,
+                    };
+                    const current_line = opt_current_line orelse CurrentLine{ .x = 0, .max_height = 0 };
+
+                    const font = resolveFont(&cached_font, dom_nodes, styler, nodes, parent_box_index);
+                    var line_it = textLineIterator(font, current_line.x, padded_content_size_x, text_node.slice);
+
+                    const first_line = line_it.first();
+                    opt_current_line = .{
+                        .x = current_line.x + first_line.width,
+                        .max_height = std.math.max(current_line.max_height, font.getLineHeight()),
+                    };
+                    while (line_it.next()) |line| {
+                        pos_y += opt_current_line.?.max_height;
+                        opt_current_line = .{
+                            .x = line.width,
+                            .max_height = font.getLineHeight(),
+                        };
+                    }
+                },
+                .svg => {}, // ignore for now
+            }
+        }
+        parent_box.content_size.y = .{ .resolved = content_height };
+        std.log.info("content height for <{s}> resolved to {}", .{@tagName(dom_node_ref.id), content_height});
     }
 }
 
-fn calcTextWidth(font_size: u32, text: []const u8) !u32 {
-    // just a silly hueristic for now
-    const char_count = try calcCharCount(u32, text);
-    return @floatToInt(u32, @intToFloat(f32, font_size) * 0.48 * @intToFloat(f32, char_count));
+const Font = struct {
+    size: u32,
+    pub fn getLineHeight(self: Font) u32 {
+        // a silly hueristic
+        return self.size;
+    }
+    pub fn getSpaceWidth(self: Font) u32 {
+        // just a silly hueristic for now
+        return @floatToInt(u32, @intToFloat(f32, self.size) * 0.48);
+    }
+};
+
+
+const TextLineFirstResult = struct {
+    slice: []const u8,
+    width: u32,
+    x: u32,
+};
+const TextLineResult = struct {
+    slice: []const u8,
+    width: u32,
+};
+const TextLineIterator = struct {
+    font: Font,
+    start_x: u32,
+    max_width: u32,
+    slice: []const u8,
+    index: usize,
+
+    pub fn first(self: *TextLineIterator) TextLineFirstResult {
+        if (self.start_x == 0) {
+            var r = self.next() orelse unreachable;
+            return .{ .slice = r.slice, .width = r.width, .x = 0 };
+        }
+
+        std.log.info("TODO: implement TextLineIterator.first", .{});
+        self.start_x = 0; // allow next to be called now
+        @panic("todo");
+    }
+    pub fn next(self: *TextLineIterator) ?TextLineResult {
+        std.debug.assert(self.start_x == 0);
+        if (self.index == self.slice.len) return null;
+
+        const start = self.index;
+        const line = calcTextLineWidth(self.font, self.slice[start..], self.max_width) catch unreachable;
+        std.debug.assert(line.consumed > 0);
+        self.index += line.consumed;
+
+        return .{
+            .slice = self.slice[start .. start + line.consumed],
+            .width = line.width,
+        };
+    }
+};
+fn textLineIterator(font: Font, start_x: u32, max_width: u32, slice: []const u8) TextLineIterator {
+    return .{
+        .font = font,
+        .start_x = start_x,
+        .max_width = max_width,
+        .slice = slice,
+        .index = 0,
+    };
 }
 
-fn calcCharCount(comptime T: type, text: []const u8) !T {
-    var count: T = 0;
+const LineResult = struct {
+    consumed: usize,
+    width: u32,
+};
+fn calcTextLineWidth(font: Font, text: []const u8, max_width: u32) !LineResult {
+    var total_width: u32 = 0;
     var it = HtmlCharIterator.init(text);
-    while (try it.next()) |_| {
-        count += 1;
+
+    while (true) {
+        // skip whitespace
+        const start = blk: {
+            const start = it.index;
+            while (try it.next()) |c| {
+                if (!isWhitespace(c)) break :blk start;
+            }
+            return .{ .consumed = text.len, .width = total_width };
+        };
+
+        if (total_width > 0) {
+            const next_width = total_width + font.getSpaceWidth();
+            if (next_width >= max_width)
+                return .{ .consumed = start, .width = total_width };
+            total_width = next_width;
+        }
+        const word = try calcWordWidth(font, text[start..]);
+        const next_width = total_width + word.width;
+        if (total_width > 0) {
+            if (next_width >= max_width)
+                return .{ .consumed = start, .width = total_width };
+        }
+        total_width = next_width;
+        it.index = start + word.byte_len;
     }
-    return count;
+}
+
+const WordWidth = struct {
+    byte_len: usize,
+    width: u32,
+};
+// assumption: text starts with at least one non-whitespace character
+fn calcWordWidth(font: Font, text: []const u8) !WordWidth {
+    std.debug.assert(text.len > 0);
+
+    var it = HtmlCharIterator.init(text);
+    var c = (it.next() catch unreachable).?;
+    std.debug.assert(!isWhitespace(c));
+
+    var total_width: u32 = 0;
+    while (true) {
+        total_width += calcCharWidth(font, c);
+        c = (try it.next()) orelse break;
+        if (isWhitespace(c)) break;
+    }
+    return .{ .byte_len = text.len, .width = total_width };
+}
+
+// NOTE! it's very possible that characters could be different widths depending on
+//       their surrounding letters, but, for simplicity we'll just assume this for now
+fn calcCharWidth(font: Font, char: u21) u32 {
+    std.debug.assert(!isWhitespace(char));
+    // this is not right, just an initial dumb implementation
+    return font.getSpaceWidth();
 }
 
 const HtmlCharIterator = struct {
@@ -514,10 +651,10 @@ fn layoutParentIterator(nodes: []const LayoutNode) LayoutParentIterator {
 }
 
 const DirectChildIterator = struct {
-    nodes: []const LayoutNode,
+    nodes: []LayoutNode,
     index: usize,
     last_node_was_container: bool,
-    pub fn next(self: *DirectChildIterator) ?*const LayoutNode {
+    pub fn next(self: *DirectChildIterator) ?*LayoutNode {
         std.debug.assert(self.index != 0);
         if (self.last_node_was_container) {
             var depth: usize = 1;
@@ -551,7 +688,7 @@ const DirectChildIterator = struct {
         return &self.nodes[self.index-1];
     }
 };
-fn directChildIterator(nodes: []const LayoutNode) DirectChildIterator {
+fn directChildIterator(nodes: []LayoutNode) DirectChildIterator {
     std.debug.assert(nodes.len >= 1);
     switch (nodes[0]) {
         .box => {},
@@ -560,4 +697,8 @@ fn directChildIterator(nodes: []const LayoutNode) DirectChildIterator {
         .svg => unreachable,
     }
     return DirectChildIterator{ .nodes = nodes, .index = 1, .last_node_was_container = false };
+}
+
+fn isWhitespace(c: u21) bool {
+    return c == ' ' or c == '\t' or c == '\r' or c == '\n';
 }

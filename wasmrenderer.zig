@@ -134,6 +134,7 @@ fn render(
 
     for (layout_nodes.items) |node, node_index| switch (node) {
         .box => |b| {
+            // TODO: offset current_box_pos
             if (b.content_size.x.getResolved() == null or b.content_size.y.getResolved() == null) {
                 std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
             } else {
@@ -146,12 +147,15 @@ fn render(
                 next_color_index = (next_color_index + 1) % unique_colors.len;
 
                 // TODO: the x/y aren't right here yet
-                const x = b.relative_content_pos.x orelse 0;
+                const x = b.relative_content_pos.x;
+                const explode_view = true;
                 const y = blk: {
-                    if (b.relative_content_pos.y) |y| break :blk y;
-                    const y = next_no_relative_position_box_y;
-                    next_no_relative_position_box_y += content_size.y + 5;
-                    break :blk y;
+                    if (explode_view) {
+                        const y = next_no_relative_position_box_y;
+                        next_no_relative_position_box_y += content_size.y + 5;
+                        break :blk y;
+                    }
+                    break :blk b.relative_content_pos.y;
                 };
                 js.strokeRect(x, y, content_size.x, content_size.y);
                 {
@@ -175,12 +179,15 @@ fn render(
             }
         },
         .end_box => |box_index| {
+            // TODO: remove offset from current_box_pos
             _ = box_index;
             //const parent_box = layout_nodes.items[box_index].parent_box;
             //parent_box_content_pos = layout_nodes.items[parent_box].relative_content_pos;
         },
         .text => |t| {
-            js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
+            // TODO: offset x/y with current box position
+            _ = t;
+            //js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
         },
         .svg => {
             std.log.info("TODO: draw svg!", .{});
