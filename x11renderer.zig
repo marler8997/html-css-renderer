@@ -8,6 +8,7 @@ const dom = @import("dom.zig");
 const layout = @import("layout.zig");
 const XY = layout.XY;
 const Styler = layout.Styler;
+const render = @import("render.zig");
 const alext = @import("alext.zig");
 
 var global_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -297,7 +298,7 @@ fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
                 },
                 .expose => |msg| {
                     std.log.info("expose: {}", .{msg});
-                    try render(conn.sock, window_id, fg_gc_id, font_dims, html_content, html_nodes);
+                    try doRender(conn.sock, window_id, fg_gc_id, font_dims, html_content, html_nodes);
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -318,7 +319,7 @@ const FontDims = struct {
     font_ascent: i16, // pixels up from the text basepoint to the top of the text
 };
 
-fn render(
+fn doRender(
     sock: std.os.socket_t,
     drawable_id: u32,
     //bg_gc_id: u32,
@@ -338,7 +339,7 @@ fn render(
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const layout_nodes = layout.layout(
+    var layout_nodes = layout.layout(
         arena.allocator(),
         html_content,
         dom_nodes,
@@ -349,98 +350,63 @@ fn render(
         std.log.err("layout failed, error={s}", .{@errorName(err)});
         return;
     };
+    alext.unmanaged.finalize(layout.LayoutNode, &layout_nodes, arena.allocator());
 
-    var next_color_index: usize = 0;
-    var next_no_relative_position_box_y: usize = 200;
-
-    for (layout_nodes.items) |node, node_index| switch (node) {
-        .box => |b| {
-            if (b.content_size.x.getResolved() == null or b.content_size.y.getResolved() == null) {
-                std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
-            } else {
-                const content_size = XY(u32){
-                    .x = b.content_size.x.getResolved().?,
-                    .y = b.content_size.y.getResolved().?,
-                };
-
-                try changeGcColor(sock, fg_gc_id, unique_colors[next_color_index], 0xffffff);
-                next_color_index = (next_color_index + 1) % unique_colors.len;
-                std.log.info("x/y={}/{}", .{b.relative_content_pos.x, b.relative_content_pos.y});
-                const x = @intCast(i16, b.relative_content_pos.x);
-                const explode_view = true;
-                const y = @intCast(i16, blk: {
-                    if (explode_view) {
-                        const y = next_no_relative_position_box_y;
-                        next_no_relative_position_box_y += content_size.y + 5;
-                        break :blk y;
-                    }
-                    break :blk b.relative_content_pos.y;
-                });
-                {
-                    const rectangles = [_]x11.Rectangle{.{
-                        .x = x, .y = y,
-                        .width = @intCast(u16, content_size.x),
-                        .height = @intCast(u16, content_size.y),
-                    }};
-                    var msg: [x11.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
-                    x11.poly_rectangle.serialize(&msg, .{
-                        .drawable_id = drawable_id,
-                        .gc_id = fg_gc_id,
-                        }, &rectangles);
-                    try send(sock, &msg);
-                }
-                {
-                    const max_text_len = 255;
-                    var msg_buf: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
-                    const msg = std.fmt.bufPrint(
-                        msg_buf[x11.image_text8.text_offset..],
-                        "box index={} {s} {}x{}", .{
-                            node_index,
-                            switch (dom_nodes[b.dom_node]) {
-                                .start_tag => |t| @tagName(t.id),
-                                .text => @as([]const u8, "text"),
-                                else => unreachable,
-                            },
-                            content_size.x,
-                            content_size.y,
-                        },
-                    ) catch unreachable;
-                    const text_len = @intCast(u8, msg.len);
-                    x11.image_text8.serializeNoTextCopy(&msg_buf, text_len, .{
-                            .drawable_id = drawable_id,
-                            .gc_id = fg_gc_id,
-                            .x = @intCast(i16, x) + 1,
-                            .y = @intCast(i16, y) + font_dims.font_ascent + 1,
-                    });
-                    try send(sock, msg_buf[0 .. x11.image_text8.getLen(text_len)]);
-                }
-            }
-        }, // TODO
-        .end_box => {}, // TODO
-        .text => |t| {
-            _ = t;
-            // TODO: handle font slice
-//            const max_text_len = 255;
-//            const text_len = std.math.cast(u8, t.slice.len) orelse max_text_len;
-//
-//            try changeGcColor(sock, fg_gc_id, 0x111111, 0xffffff);
-//            var msg: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
-//            x11.image_text8.serialize(
-//                &msg,
-//                x11.Slice(u8, [*]const u8){ .ptr = t.slice.ptr, .len = text_len },
-//                .{
-//                    .drawable_id = drawable_id,
-//                    .gc_id = fg_gc_id,
-//                    .x = @intCast(i16, t.x),
-//                    .y = @intCast(i16, t.y) + font_dims.font_ascent,
-//                },
-//            );
-//            try send(sock, msg[0 .. x11.image_text8.getLen(text_len)]);
-        },
-        .svg => {
-            std.log.warn("TODO: render svg!", .{});
-        },
+    var render_ctx = RenderCtx {
+        .sock = sock,
+        .drawable_id = drawable_id,
+        .fg_gc_id = fg_gc_id,
+        .font_dims = font_dims,
     };
+    try render.render(html_content, dom_nodes, layout_nodes.items, RenderCtx, &onRender, render_ctx);
+}
+
+const RenderCtx = struct {
+    sock: std.os.socket_t,
+    drawable_id: u32,
+    fg_gc_id: u32,
+    font_dims: FontDims,
+};
+
+fn onRender(ctx: RenderCtx, op: render.Op) !void {
+    switch (op) {
+        .rect => |r| {
+            try changeGcColor(ctx.sock, ctx.fg_gc_id, r.color, 0xffffff);
+            if (r.fill) {
+                @panic("todo");
+            } else {
+                const rectangles = [_]x11.Rectangle{.{
+                    .x = @intCast(i16, r.x),
+                    .y = @intCast(i16, r.y),
+                    .width = @intCast(u16, r.w),
+                    .height = @intCast(u16, r.h),
+                }};
+                var msg: [x11.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
+                x11.poly_rectangle.serialize(&msg, .{
+                    .drawable_id = ctx.drawable_id,
+                    .gc_id = ctx.fg_gc_id,
+                    }, &rectangles);
+                try send(ctx.sock, &msg);
+            }
+        },
+        .text => |t| {
+            const max_text_len = 255;
+            const text_len = std.math.cast(u8, t.slice.len) orelse max_text_len;
+            try changeGcColor(ctx.sock, ctx.fg_gc_id, 0x111111, 0xffffff);
+            var msg: [x11.image_text8.getLen(max_text_len)]u8 = undefined;
+            x11.image_text8.serialize(
+                &msg,
+                x11.Slice(u8, [*]const u8){ .ptr = t.slice.ptr, .len = text_len },
+                .{
+                    .drawable_id = ctx.drawable_id,
+                    .gc_id = ctx.fg_gc_id,
+                    .x = @intCast(i16, t.x),
+                    .y = @intCast(i16, t.y) + ctx.font_dims.font_ascent,
+                },
+            );
+            try send(ctx.sock, msg[0 .. x11.image_text8.getLen(text_len)]);
+        },
+    }
 }
 
 fn changeGcColor(sock: std.os.socket_t, gc_id: u32, fg_color: u32, bg_color: u32) !void {
@@ -451,12 +417,6 @@ fn changeGcColor(sock: std.os.socket_t, gc_id: u32, fg_color: u32, bg_color: u32
     });
     try send(sock, msg_buf[0..len]);
 }
-
-var unique_colors = [_]u32 {
-    0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0,
-    0xf032e6, 0xbcf60c, 0xfabebe, 0x008080, 0xe6beff, 0x9a6324, 0xfffac8,
-    0x800000, 0xaaffc3, 0x808000, 0xffd8b1, 0x000075, 0x808080,
-};
 
 pub const SocketReader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket);
 

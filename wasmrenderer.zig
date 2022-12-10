@@ -4,6 +4,7 @@ const layout = @import("layout.zig");
 const Styler = layout.Styler;
 const LayoutNode = layout.LayoutNode;
 const alext = @import("alext.zig");
+const render = @import("render.zig");
 
 const Refcounted = @import("Refcounted.zig");
 
@@ -47,7 +48,7 @@ export fn onResize(width: u32, height: u32) void {
         return;
     };
 
-    render(html, XY(u32).init(width, height), dom_nodes.items);
+    doRender(html, XY(u32).init(width, height), dom_nodes.items);
 }
 
 var global_opt_html_buf: ?struct {
@@ -100,10 +101,10 @@ fn loadHtmlSlice(
     global_opt_dom_nodes = nodes;
 
     js.initCanvas();
-    render(html, viewport_size, nodes.items);
+    doRender(html, viewport_size, nodes.items);
 }
 
-fn render(
+fn doRender(
     html: []const u8,
     viewport_size: XY(u32),
     dom_nodes: []const dom.Node,
@@ -124,75 +125,32 @@ fn render(
         std.log.err("layout failed, error={s}", .{@errorName(err)});
         return;
     };
-    alext.unmanaged.finalize(layout.LayoutNode, &layout_nodes, gpa.allocator());
+    alext.unmanaged.finalize(LayoutNode, &layout_nodes, gpa.allocator());
+    render.render(
+        html,
+        dom_nodes,
+        layout_nodes.items,
+        void,
+        &onRender,
+        {},
+    ) catch |err| switch (err) { };
+}
 
-    var next_color_index: usize = 0;
-    var next_no_relative_position_box_y: usize = 200;
-
-    var current_box_pos = XY(u32){ .x = 0, .y = 0 };
-    _ = current_box_pos;
-
-    for (layout_nodes.items) |node, node_index| switch (node) {
-        .box => |b| {
-            // TODO: offset current_box_pos
-            if (b.content_size.x.getResolved() == null or b.content_size.y.getResolved() == null) {
-                std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
+fn onRender(ctx: void, op: render.Op) !void {
+    _ = ctx;
+    switch (op) {
+        .rect => |r| {
+            if (r.fill) {
+                @panic("todo");
             } else {
-                const content_size = XY(u32){
-                    .x = b.content_size.x.getResolved().?,
-                    .y = b.content_size.y.getResolved().?,
-                };
-
-                js.strokeRgb(unique_colors[next_color_index]);
-                next_color_index = (next_color_index + 1) % unique_colors.len;
-
-                // TODO: the x/y aren't right here yet
-                const x = b.relative_content_pos.x;
-                const explode_view = true;
-                const y = blk: {
-                    if (explode_view) {
-                        const y = next_no_relative_position_box_y;
-                        next_no_relative_position_box_y += content_size.y + 5;
-                        break :blk y;
-                    }
-                    break :blk b.relative_content_pos.y;
-                };
-                js.strokeRect(x, y, content_size.x, content_size.y);
-                {
-                    var text_buf: [300]u8 = undefined;
-                    const msg = std.fmt.bufPrint(
-                        &text_buf,
-                        "box index={} {s} {}x{}", .{
-                            node_index,
-                            switch (dom_nodes[b.dom_node]) {
-                                .start_tag => |t| @tagName(t.id),
-                                .text => @as([]const u8, "text"),
-                                else => unreachable,
-                            },
-                            content_size.x,
-                            content_size.y,
-                        },
-                    ) catch unreachable;
-                    const font_size = 10;
-                    js.drawText(x + 1, y + 1 + font_size, font_size, msg.ptr, msg.len);
-                }
+                js.strokeRgb(r.color);
+                js.strokeRect(r.x, r.y, r.w, r.h);
             }
         },
-        .end_box => |box_index| {
-            // TODO: remove offset from current_box_pos
-            _ = box_index;
-            //const parent_box = layout_nodes.items[box_index].parent_box;
-            //parent_box_content_pos = layout_nodes.items[parent_box].relative_content_pos;
-        },
         .text => |t| {
-            // TODO: offset x/y with current box position
-            _ = t;
-            //js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
+            js.drawText(t.x, t.y + t.size, t.size, t.slice.ptr, t.slice.len);
         },
-        .svg => {
-            std.log.info("TODO: draw svg!", .{});
-        },
-    };
+    }
 }
 
 const ParseContext = struct {
@@ -202,12 +160,6 @@ fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
     const context = @intToPtr(*ParseContext, @ptrToInt(context_ptr));
     std.log.err("{s}: parse error: {s}", .{context.name, msg});
 }
-
-var unique_colors = [_]u32 {
-    0xe6194b, 0x3cb44b, 0xffe119, 0x4363d8, 0xf58231, 0x911eb4, 0x46f0f0,
-    0xf032e6, 0xbcf60c, 0xfabebe, 0x008080, 0xe6beff, 0x9a6324, 0xfffac8,
-    0x800000, 0xaaffc3, 0x808000, 0xffd8b1, 0x000075, 0x808080,
-};
 
 const JsLogWriter = std.io.Writer(void, error{}, jsLogWrite);
 fn jsLogWrite(context: void, bytes: []const u8) !usize {
