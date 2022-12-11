@@ -5,6 +5,7 @@ const Styler = layout.Styler;
 const LayoutNode = layout.LayoutNode;
 const alext = @import("alext.zig");
 const render = @import("render.zig");
+const schrift = @import("schrift.zig");
 
 const Refcounted = @import("Refcounted.zig");
 
@@ -21,6 +22,22 @@ const js = struct {
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){ };
+
+const times_new_roman_ttf = @embedFile("font/times-new-roman.ttf");
+var times_new_roman: *schrift.Font = undefined;
+
+export fn init() bool {
+    std.log.debug("init called", .{});
+    if (schrift.loadmem(times_new_roman_ttf)) |font| {
+        times_new_roman = font;
+        schrift.free(font);
+    } else {
+        std.log.err("failed to load times-new-roman.ttf", .{});
+        return false; // failure
+    }
+
+    return true; // success
+}
 
 export fn alloc(len: usize) ?[*]u8 {
     //std.log.debug("alloc {}", .{len});
@@ -179,4 +196,63 @@ pub fn log(
     const writer = JsLogWriter{ .context = {} };
     std.fmt.format(writer, log_fmt, args) catch unreachable;
     js.logFlush();
+}
+
+// --------------------------------------------------------------------------------
+// libc functions
+// --------------------------------------------------------------------------------
+const alloc_align = 16;
+const alloc_metadata_len = std.mem.alignForward(@sizeOf(usize), alloc_align);
+
+fn getGpaBuf(ptr: [*]u8) []align(alloc_align) u8 {
+    const start = @ptrToInt(ptr) - alloc_metadata_len;
+    const len = @intToPtr(*usize, start).*;
+    return @alignCast(alloc_align, @intToPtr([*]u8, start)[0 .. len]);
+}
+export fn malloc(size: usize) callconv(.C) ?[*]align(alloc_align) u8 {
+    //trace.log("malloc {}", .{size});
+    std.debug.assert(size > 0); // TODO: what should we do in this case?
+    const full_len = alloc_metadata_len + size;
+    const buf = gpa.allocator().alignedAlloc(u8, alloc_align, full_len) catch |err| switch (err) {
+        error.OutOfMemory => {
+            //trace.log("malloc return null", .{});
+            return null;
+        },
+    };
+    @ptrCast(*usize, buf).* = full_len;
+    const result = @intToPtr([*]align(alloc_align) u8, @ptrToInt(buf.ptr) + alloc_metadata_len);
+    //trace.log("malloc return {*}", .{result});
+    return result;
+}
+
+export fn calloc(num: usize, size: usize) ?*anyopaque {
+    const total_len = num * size;
+    const opt = malloc(total_len);
+    if (opt) |p| {
+        @memset(p, 0, total_len);
+    }
+    return opt;
+}
+export fn free(ptr: ?[*]align(alloc_align) u8) callconv(.C) void {
+    //trace.log("free {*}", .{ptr});
+    const p = ptr orelse return;
+    gpa.allocator().free(getGpaBuf(p));
+}
+
+export fn __assert_fail(
+    expression: [*:0]const u8,
+    file: [*:0]const u8,
+    line: c_int,
+    func: [*:0]const u8,
+) callconv(.C) void {
+    std.log.err("assert failed '{s}' ('{s}' line {d} function '{s}')", .{
+        expression, file, line, func });
+    @panic("__assert_fail");
+}
+
+export fn munmap(addr: *anyopaque, len: usize) c_int {
+    _ = addr;
+    _ = len;
+    std.log.err("TODO: implement munmap", .{});
+    @panic("todo");
 }

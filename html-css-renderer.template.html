@@ -42,7 +42,7 @@ iframe { border: 1px solid black; }
 </style>
 <script>
 const wasm_base64 = "<@INSERT_WASM_HERE@>";
-var global_wasm = undefined;
+var global_wasm = null;
 var global_current_log = "";
 var global_canvas_dom = undefined;
 var global_canvas = undefined;
@@ -76,12 +76,22 @@ const wasm_env = {
         global_canvas.fillStyle = "black";
         global_canvas.fillText(text, x, y);
     },
+    // exports for libc
+    __stack_chk_fail: function() {
+        console.log('__stack_chk_fail');
+        throw "__stack_chk_fail";
+    }
 };
 WebAssembly.instantiate(
     Uint8Array.from(atob(wasm_base64), c => c.charCodeAt(0)).buffer,
     { env: wasm_env }
 ).then(wasm => {
     global_wasm = wasm.instance.exports;
+    if (!global_wasm.init()) {
+        console.log("error: init failed");
+        global_wasm = null;
+        return;
+    }
 });
 function readStr(buffer, ptr, len) {
     const array = new Uint8Array(buffer, ptr, len);
@@ -116,6 +126,13 @@ function allocStr(str) {
 }
 
 function loadHtml(name, html) {
+    if (global_wasm == null) {
+        msg = "wasm failed to load";
+        console.log(msg);
+        alert(msg);
+        return;
+    }
+
     const name_obj = allocStr(name);
     if (name_obj.length == 0) {
         fatal("WASM is out of memory");
