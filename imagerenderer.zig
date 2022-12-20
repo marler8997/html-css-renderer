@@ -136,13 +136,16 @@ const RenderCtx = struct {
 fn onRender(ctx: RenderCtx, op: render.Op) !void {
     switch (op) {
         .rect => |r| {
+            var image_offset: usize = (r.y * ctx.stride) + (r.x * bytes_per_pixel);
             if (r.fill) {
-                @panic("todo");
-            } else {
                 var row: usize = 0;
-                var image_offset: usize = (r.y * ctx.stride) + (r.x * bytes_per_pixel);
+                while (row < r.h) : (row += 1) {
+                    drawRow(ctx.image[image_offset..], r.w, r.color);
+                    image_offset += ctx.stride;
+                }
+            } else {
                 drawRow(ctx.image[image_offset..], r.w, r.color);
-                row += 1;
+                var row: usize = 1;
                 image_offset += ctx.stride;
                 while (row + 1 < r.h) : (row += 1) {
                     drawPixel(ctx.image[image_offset..], r.color);

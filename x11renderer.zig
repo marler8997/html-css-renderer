@@ -372,15 +372,20 @@ fn onRender(ctx: RenderCtx, op: render.Op) !void {
     switch (op) {
         .rect => |r| {
             try changeGcColor(ctx.sock, ctx.fg_gc_id, r.color, 0xffffff);
+            const rectangles = [_]x11.Rectangle{.{
+                .x = @intCast(i16, r.x),
+                .y = @intCast(i16, r.y),
+                .width = @intCast(u16, r.w),
+                .height = @intCast(u16, r.h),
+            }};
             if (r.fill) {
-                @panic("todo");
+                var msg: [x11.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
+                x11.poly_fill_rectangle.serialize(&msg, .{
+                    .drawable_id = ctx.drawable_id,
+                    .gc_id = ctx.fg_gc_id,
+                    }, &rectangles);
+                try send(ctx.sock, &msg);
             } else {
-                const rectangles = [_]x11.Rectangle{.{
-                    .x = @intCast(i16, r.x),
-                    .y = @intCast(i16, r.y),
-                    .width = @intCast(u16, r.w),
-                    .height = @intCast(u16, r.h),
-                }};
                 var msg: [x11.poly_rectangle.getLen(rectangles.len)]u8 = undefined;
                 x11.poly_rectangle.serialize(&msg, .{
                     .drawable_id = ctx.drawable_id,

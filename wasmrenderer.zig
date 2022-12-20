@@ -17,6 +17,8 @@ const js = struct {
     extern fn canvasClear() void;
     extern fn strokeRgb(rgb: u32) void;
     extern fn strokeRect(x: u32, y: u32, width: u32, height: u32) void;
+    extern fn fillRgb(rgb: u32) void;
+    extern fn fillRect(x: u32, y: u32, width: u32, height: u32) void;
     extern fn drawText(x: u32, y: u32, font_size: usize, ptr: [*]const u8, len: usize) void;
 };
 
@@ -141,7 +143,8 @@ fn onRender(ctx: void, op: render.Op) !void {
     switch (op) {
         .rect => |r| {
             if (r.fill) {
-                @panic("todo");
+                js.fillRgb(r.color);
+                js.fillRect(r.x, r.y, r.w, r.h);
             } else {
                 js.strokeRgb(r.color);
                 js.strokeRect(r.x, r.y, r.w, r.h);
