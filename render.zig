@@ -90,9 +90,21 @@ pub fn render(
             //parent_box_content_pos = layout_nodes.items[parent_box].relative_content_pos;
         },
         .text => |t| {
-            // TODO: offset x/y with current box position
-            _ = t;
-            //js.drawText(t.x, t.y + t.font_size, t.font_size, t.slice.ptr, t.slice.len);
+            var line_it = layout.textLineIterator(t.font, t.first_line_x, t.max_width, t.slice);
+
+            const first_line = line_it.first();
+            // TODO: set this correctly
+            var current_box_content_pos = XY(u32){ .x = 0, .y = 0 };
+            const abs_x = current_box_content_pos.x + t.relative_content_pos.x;
+            var abs_y = current_box_content_pos.y + t.relative_content_pos.y;
+            try onRender(ctx, .{ .text = .{ .x = abs_x + t.first_line_x, .y = abs_y, .size = t.font.size, .slice = first_line.slice }});
+            // TODO: this first_line_height won't be correct right now if there
+            //       is another element after us on the same line with a bigger height
+            abs_y += t.first_line_height;
+            while (line_it.next()) |line| {
+                try onRender(ctx, .{ .text = .{ .x = abs_x, .y = abs_y, .size = t.font.size, .slice = line.slice }});
+                abs_y += t.font.getLineHeight();
+            }
         },
         .svg => {
             std.log.info("TODO: draw svg!", .{});

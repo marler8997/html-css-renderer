@@ -226,6 +226,10 @@ pub const LayoutNode = union(enum) {
     end_box: usize,
     text: struct {
         slice: []const u8,
+        font: Font,
+        first_line_x: u32,
+        first_line_height: u32,
+        max_width: u32,
         relative_content_pos: XY(u32),
     },
     svg: struct {
@@ -347,6 +351,10 @@ pub fn layout(
                 if (slice.len == 0) continue;
                 try nodes.append(allocator, .{ .text = .{
                     .slice = slice,
+                    .font = undefined,
+                    .first_line_x = undefined,
+                    .first_line_height = undefined,
+                    .max_width = undefined,
                     .relative_content_pos = undefined,
                 }});
             },
@@ -453,20 +461,26 @@ fn endParentBox(
                         .y = pos_y,
                     };
                     const current_line = opt_current_line orelse CurrentLine{ .x = 0, .max_height = 0 };
+                    text_node.first_line_x = current_line.x;
+                    text_node.max_width = padded_content_size_x;
 
-                    const font = resolveFont(&cached_font, dom_nodes, styler, nodes, parent_box_index);
-                    var line_it = textLineIterator(font, current_line.x, padded_content_size_x, text_node.slice);
+                    text_node.font = resolveFont(&cached_font, dom_nodes, styler, nodes, parent_box_index);
+                    var line_it = textLineIterator(text_node.font, current_line.x, padded_content_size_x, text_node.slice);
 
                     const first_line = line_it.first();
+                    text_node.first_line_x = current_line.x;
                     opt_current_line = .{
                         .x = current_line.x + first_line.width,
-                        .max_height = std.math.max(current_line.max_height, font.getLineHeight()),
+                        .max_height = std.math.max(current_line.max_height, text_node.font.getLineHeight()),
                     };
+                    // TODO: this value wont' be correct if there is another element
+                    //       come after us on the same line with a higher height.
+                    text_node.first_line_height = opt_current_line.?.max_height;
                     while (line_it.next()) |line| {
                         pos_y += opt_current_line.?.max_height;
                         opt_current_line = .{
                             .x = line.width,
-                            .max_height = font.getLineHeight(),
+                            .max_height = text_node.font.getLineHeight(),
                         };
                     }
                 },
@@ -478,7 +492,7 @@ fn endParentBox(
     }
 }
 
-const Font = struct {
+pub const Font = struct {
     size: u32,
     pub fn getLineHeight(self: Font) u32 {
         // a silly hueristic
@@ -491,26 +505,21 @@ const Font = struct {
 };
 
 
-const TextLineFirstResult = struct {
-    slice: []const u8,
-    width: u32,
-    x: u32,
-};
-const TextLineResult = struct {
+pub const TextLineResult = struct {
     slice: []const u8,
     width: u32,
 };
-const TextLineIterator = struct {
+pub const TextLineIterator = struct {
     font: Font,
     start_x: u32,
     max_width: u32,
     slice: []const u8,
     index: usize,
 
-    pub fn first(self: *TextLineIterator) TextLineFirstResult {
+    pub fn first(self: *TextLineIterator) TextLineResult {
         if (self.start_x == 0) {
             var r = self.next() orelse unreachable;
-            return .{ .slice = r.slice, .width = r.width, .x = 0 };
+            return .{ .slice = r.slice, .width = r.width };
         }
 
         std.log.info("TODO: implement TextLineIterator.first", .{});
@@ -532,7 +541,7 @@ const TextLineIterator = struct {
         };
     }
 };
-fn textLineIterator(font: Font, start_x: u32, max_width: u32, slice: []const u8) TextLineIterator {
+pub fn textLineIterator(font: Font, start_x: u32, max_width: u32, slice: []const u8) TextLineIterator {
     return .{
         .font = font,
         .start_x = start_x,

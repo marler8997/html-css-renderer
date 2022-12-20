@@ -7,6 +7,7 @@ const XY = layout.XY;
 const Styler = layout.Styler;
 const render = @import("render.zig");
 const alext = @import("alext.zig");
+const schrift = @import("font/schrift.zig");
 
 var global_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
@@ -152,7 +153,10 @@ fn onRender(ctx: RenderCtx, op: render.Op) !void {
             }
         },
         .text => |t| {
-            std.log.info("TODO: render text '{s}'", .{t.slice});
+            // TODO: maybe don't remap/unmap pages for each drawText call?
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+            drawText(arena.allocator(), ctx.image, ctx.stride, t.x, t.y, t.size, t.slice);
         },
     }
 }
@@ -167,5 +171,90 @@ fn drawRow(img: []u8, width: u32, color: u32) void {
     var limit: usize = width * bytes_per_pixel;
     while (offset < limit) : (offset += bytes_per_pixel) {
         drawPixel(img[offset..], color);
+    }
+}
+
+const times_new_roman = struct {
+    pub const ttf = @embedFile("font/times-new-roman.ttf");
+    pub const info = schrift.getTtfInfo(ttf) catch unreachable;
+};
+fn drawText(
+    allocator: std.mem.Allocator,
+    img: []u8,
+    img_stride: usize,
+    x: u32, y: u32,
+    font_size: u32,
+    text: []const u8,
+) void {
+    //std.log.info("drawText at {}, {} size={} text='{s}'", .{x, y, font_size, text});
+    var scale: f64 = @intToFloat(f64, font_size);
+
+    var pixels_array_list = std.ArrayListUnmanaged(u8){ };
+
+    const lmetrics = schrift.lmetrics(times_new_roman.ttf, times_new_roman.info, scale) catch |err|
+        std.debug.panic("failed to get lmetrics with {s}", .{@errorName(err)});
+    var next_x = x;
+
+    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
+    while (it.nextCodepoint()) |c| {
+        const gid = schrift.lookupGlyph(times_new_roman.ttf, c) catch |err|
+            std.debug.panic("failed to get glyph id for {}: {s}", .{c, @errorName(err)});
+        const downward = true;
+        const gmetrics = schrift.gmetrics(
+            times_new_roman.ttf,
+            times_new_roman.info,
+            downward,
+            .{ .x = scale, .y = scale },
+            .{ .x = 0, .y = 0 },
+            gid,
+        ) catch |err| std.debug.panic("gmetrics for char {} failed with {s}", .{c, @errorName(err)});
+        const glyph_size = layout.XY(u32) {
+            .x = std.mem.alignForwardGeneric(u32, @intCast(u32, gmetrics.min_width), 4),
+            .y = @intCast(u32, gmetrics.min_height),
+        };
+        //std.log.info("  c={} size={}x{} adv={d:.0}", .{c, glyph_size.x, glyph_size.y, @ceil(gmetrics.advance_width)});
+        const pixel_len = @intCast(usize, glyph_size.x) * @intCast(usize, glyph_size.y);
+        pixels_array_list.ensureTotalCapacity(allocator, pixel_len) catch |e| oom(e);
+        const pixels = pixels_array_list.items.ptr[0 .. pixel_len];
+        schrift.render(
+            allocator,
+            times_new_roman.ttf,
+            times_new_roman.info,
+            downward,
+            .{ .x = scale, .y = scale },
+            .{ .x = 0, .y = 0 },
+            pixels,
+            .{ .x = @intCast(i32, glyph_size.x), .y = @intCast(i32, glyph_size.y) },
+            gid,
+        ) catch |err| std.debug.panic("render for char {} failed with {s}", .{c, @errorName(err)});
+
+        {
+            var glyph_y: usize = 0;
+            while (glyph_y < glyph_size.y) : (glyph_y += 1) {
+                const row_offset_i32 = (
+                    @intCast(i32, y) +
+                    @floatToInt(i32, @ceil(lmetrics.ascender)) +
+                    gmetrics.y_offset +
+                    @intCast(i32, glyph_y)
+                ) * @intCast(i32, img_stride);
+                if (row_offset_i32 < 0) continue;
+
+                const row_offset = @intCast(usize, row_offset_i32);
+
+                var glyph_x: usize = 0;
+                while (glyph_x < glyph_size.x) : (glyph_x += 1) {
+                    const image_pos = row_offset + (next_x + glyph_x) * bytes_per_pixel;
+                    if (image_pos + bytes_per_pixel <= img.len) {
+                        const grayscale = 255 - pixels[glyph_y * glyph_size.x + glyph_x];
+                        const color =
+                            (@intCast(u32, grayscale) << 16) |
+                            (@intCast(u32, grayscale) <<  8) |
+                            (@intCast(u32, grayscale) <<  0) ;
+                        drawPixel(img[image_pos..], color);
+                    }
+                }
+            }
+        }
+        next_x += @floatToInt(u32, @ceil(gmetrics.advance_width));
     }
 }
