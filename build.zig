@@ -17,6 +17,15 @@ pub fn build(b: *std.build.Builder) void {
         exe.install();
     }
 
+    {
+        const exe = b.addExecutable("imagerenderer", "imagerenderer.zig");
+        exe.step.dependOn(&gen_id_maps.step);
+        exe.setTarget(target);
+        exe.setBuildMode(mode);
+        const install = b.addInstallArtifact(exe);
+        b.step("image", "build/install imagerenderer").dependOn(&install.step);
+    }
+
     const zigx_repo = GitRepoStep.create(b, .{
         .url = "https://github.com/marler8997/zigx",
         .branch = null,
