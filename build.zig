@@ -59,7 +59,7 @@ pub fn build(b: *std.build.Builder) void {
 
 fn allocIdMapSource(allocator: std.mem.Allocator) []const u8 {
     var src = std.ArrayList(u8).init(allocator);
-    errdefer src.deinit();
+    defer src.deinit();
     writeIdMapSource(src.writer()) catch unreachable;
     return src.toOwnedSlice() catch unreachable;
 }
