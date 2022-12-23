@@ -219,6 +219,21 @@ const Box = struct {
     relative_content_pos: XY(u32),
     content_size: XY(ContentSize),
     mbp: MarginBorderPadding,
+
+    pub fn serialize(self: Box, writer: anytype) !void {
+        var parent_buf: [30]u8 = undefined;
+        const parent = blk: {
+            if (self.parent_box == std.math.maxInt(usize))
+                break :blk std.fmt.bufPrint(&parent_buf, "none", .{}) catch unreachable;
+            break :blk std.fmt.bufPrint(&parent_buf, "{}", .{self.parent_box}) catch unreachable;
+        };
+        try writer.print(
+            "box dom={} parent={s} relative_content_pos={},{} content_size={}x{} margin={} border={} padding={}\n",
+            .{self.dom_node, parent, self.relative_content_pos.x, self.relative_content_pos.y,
+              self.content_size.x, self.content_size.y, self.mbp.margin,
+              self.mbp.border, self.mbp.padding},
+        );
+    }
 };
 
 pub const LayoutNode = union(enum) {
@@ -235,6 +250,18 @@ pub const LayoutNode = union(enum) {
     svg: struct {
         start_dom_node: usize,
     },
+    /// pub fn format(value: ?, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void
+    pub fn serialize(self: LayoutNode, writer: anytype) !void {
+        switch (self) {
+            .box => |*b| try b.serialize(writer),
+            .end_box => |idx| try writer.print("end_box {}\n", .{idx}),
+            .text => |t| try writer.print(
+                "text slice='{s}' font={} first_line(x={} height={}) max_width={} relative_content_pos={},{}\n",
+                .{ t.slice, t.font, t.first_line_x, t.first_line_height, t.max_width, t.relative_content_pos.x, t.relative_content_pos.y},
+            ),
+            .svg => try writer.writeAll("svg\n"),
+        }
+    }
 };
 
 // Layout Algorithm:
@@ -445,7 +472,7 @@ fn endParentBox(
                     };
 
                     content_height += box_content_size.y;
-                    content_height += box.mbp.border + box.mbp.margin;
+                    content_height += 2*box.mbp.border + 2*box.mbp.margin;
 
                     // if is block element
                     if (dom.defaultDisplayIsBlock(dom_nodes[box.dom_node].start_tag.id)) {

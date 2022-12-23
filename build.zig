@@ -2,7 +2,7 @@ const std = @import("std");
 const GitRepoStep = @import("GitRepoStep.zig");
 const htmlid = @import("htmlid.zig");
 
-pub fn build(b: *std.build.Builder) void {
+pub fn build(b: *std.build.Builder) !void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
@@ -54,6 +54,22 @@ pub fn build(b: *std.build.Builder) void {
         run.addFileSourceArg(.{ .path = "html-css-renderer.template.html"});
         run.addArg(b.pathJoin(&.{ b.install_path, "html-css-renderer.html" }));
         b.step("wasm", "build the wasm-based renderer").dependOn(&run.step);
+    }
+
+    {
+        const exe = b.addExecutable("testrunner", "testrunner.zig");
+        exe.step.dependOn(&gen_id_maps.step);
+        exe.setTarget(target);
+        exe.setBuildMode(mode);
+        const install = b.addInstallArtifact(exe);
+        const test_step = b.step("test", "run tests");
+        test_step.dependOn(&install.step); // make testrunner easily accessible
+        for ([_][]const u8{"hello.html"}) |test_filename| {
+            const run_step = exe.run();
+            run_step.addArg(b.pathJoin(&.{ b.build_root, "test", test_filename}));
+            run_step.stdout_action = .{ .expect_exact = "Success\n" };
+            test_step.dependOn(&run_step.step);
+        }
     }
 }
 

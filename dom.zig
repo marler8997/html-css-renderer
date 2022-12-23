@@ -225,6 +225,7 @@ pub fn parse(allocator: std.mem.Allocator, content: []const u8, opt: ParseOption
                 if (!isWhitespace(slice))
                     return opt.reportError("unexpected data before <html> '{}'", .{std.zig.fmtEscapes(slice)});
             },
+            .comment => {},
             else => return opt.reportError("expected <html> but got a {s} token", .{@tagName(token)}),
         }
     }

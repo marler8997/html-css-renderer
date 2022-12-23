@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<!--
+500x200
+box dom=0 parent=none relative_content_pos=0,0 content_size=500x32 margin=0 border=0 padding=0
+box dom=1 parent=0 relative_content_pos=8,8 content_size=484x16 margin=8 border=0 padding=0
+text slice='Hello' font=layout.Font{ .size = 16 } first_line(x=0 height=16) max_width=484 relative_content_pos=0,0
+end_box 1
+end_box 0
+-->
+<!--
+TODO: chromium renders body height at 18 instead of 16, 18 is probably correct
+      though, currently just using font-size as the height which isn't right
+-->
+<html><body>Hello</body></html>
