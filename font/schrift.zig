@@ -643,9 +643,9 @@ fn simplePoints(
 }
 
 fn add(comptime T: type, a: T, b: T) ?T {
-    var result: T = undefined;
-    if (@addWithOverflow(T, a, b, &result)) return null;
-    return result;
+    const ov = @addWithOverflow(a, b);
+    if (ov[1] != 0) return null;
+    return ov[0];
 }
 
 fn decodeContour(
