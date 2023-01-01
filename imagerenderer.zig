@@ -39,18 +39,32 @@ pub fn cmdlineArgs() [][*:0]u8 {
     return std.os.argv.ptr[1 .. std.os.argv.len];
 }
 
+fn getCmdOpt(args: [][*:0]u8, i: *usize) []u8 {
+    i.* += 1;
+    if (i.* == args.len) {
+        std.log.err("cmdline option '{s}' requires an argument", .{args[i.* - 1]});
+        std.os.exit(0xff);
+    }
+    return std.mem.span(args[i.*]);
+}
+
 pub fn main() !u8 {
     var viewport_width: u32 = 600;
-    const viewport_height: u32 = 600;
+    var viewport_height: u32 = 600;
 
     const args = blk: {
         const all_args = cmdlineArgs();
         var non_option_len: usize = 0;
-        for (all_args) |arg_ptr| {
-            const arg = std.mem.span(arg_ptr);
+        var i: usize = 0;
+        while (i < all_args.len) : (i += 1) {
+            const arg = std.mem.span(all_args[i]);
             if (!std.mem.startsWith(u8, arg, "-")) {
                 all_args[non_option_len] = arg;
                 non_option_len += 1;
+            } else if (std.mem.eql(u8, arg, "--height")) {
+                const str = getCmdOpt(all_args, &i);
+                viewport_height = std.fmt.parseInt(u32, str, 10) catch |err|
+                    fatal("invalid height '{s}': {s}", .{ str, @errorName(err) });
             } else {
                 fatal("unknown cmdline option '{s}'", .{arg});
             }
@@ -136,22 +150,30 @@ const RenderCtx = struct {
 fn onRender(ctx: RenderCtx, op: render.Op) !void {
     switch (op) {
         .rect => |r| {
+            // TODO: adjust the rectangle to make sure we only render
+            //       what's visible in the viewport
             var image_offset: usize = (r.y * ctx.stride) + (r.x * bytes_per_pixel);
             if (r.fill) {
                 var row: usize = 0;
                 while (row < r.h) : (row += 1) {
+                    if (image_offset >= ctx.image.len) return;
                     drawRow(ctx.image[image_offset..], r.w, r.color);
                     image_offset += ctx.stride;
                 }
             } else {
+                if (image_offset >= ctx.image.len) return;
                 drawRow(ctx.image[image_offset..], r.w, r.color);
                 var row: usize = 1;
                 image_offset += ctx.stride;
                 while (row + 1 < r.h) : (row += 1) {
+                    if (image_offset >= ctx.image.len) return;
                     drawPixel(ctx.image[image_offset..], r.color);
-                    drawPixel(ctx.image[image_offset + ((r.w - 1) * bytes_per_pixel)..], r.color);
+                    const right = image_offset + ((r.w - 1) * bytes_per_pixel);
+                    if (right >= ctx.image.len) return;
+                    drawPixel(ctx.image[right..], r.color);
                     image_offset += ctx.stride;
                 }
+                if (image_offset >= ctx.image.len) return;
                 drawRow(ctx.image[image_offset..], r.w, r.color);
             }
         },
