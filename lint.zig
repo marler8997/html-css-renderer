@@ -81,7 +81,7 @@ const ParseContext = struct {
 };
 
 fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
-    const context: *ParseContext = @ptrCast(context_ptr);
+    const context: *ParseContext = @alignCast(@ptrCast(context_ptr));
     std.io.getStdErr().writer().print("{s}: parse error: {s}\n", .{context.filename, msg}) catch |err|
         std.debug.panic("failed to print parse error with {s}", .{@errorName(err)});
 }
