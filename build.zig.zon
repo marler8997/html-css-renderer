@@ -1,0 +1,14 @@
+.{
+    .name = "html-css-renderer",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{
+        .zigx = .{
+            .url = "https://github.com/marler8997/zigx/archive/f09fd6fa5d593c759c0d9d35db4dfb5a150d366a.tar.gz",
+            .hash = "122026f249798ac9b3ab3561b94d8460aaf1fb3487a5cb7c021387db1136cf08936d",
+        },
+    },
+    .paths = .{
+        "",
+    },
+}

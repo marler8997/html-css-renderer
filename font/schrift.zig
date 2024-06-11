@@ -55,6 +55,11 @@ const ttf = struct {
     pub const file_magic_one = 0x00010000;
     pub const file_magic_two = 0x74727565;
 
+    pub const horizonal_kerning = 0x01;
+    pub const minimum_kerning = 0x02;
+    pub const cross_stream_kerning = 0x04;
+    pub const override_kerning = 0x08;
+
     pub const point_is_on_curve = 0x01;
     pub const x_change_is_small = 0x02;
     pub const y_change_is_small = 0x04;
@@ -83,11 +88,11 @@ pub fn lmetrics(ttf_mem: []const u8, info: TtfInfo, y_scale: Float) !LMetrics {
     const hhea_limit = hhea + 10;
     if (hhea_limit > ttf_mem.len)
         return error.TtfBadHheaTable;
-    const factor = y_scale / @intToFloat(Float, info.units_per_em);
+    const factor = y_scale / @as(Float, @floatFromInt(info.units_per_em));
     return LMetrics{
-        .ascender = factor * @intToFloat(Float, std.mem.readIntBig(i16, ttf_mem[hhea + 4 ..][0..2])),
-        .descender = factor * @intToFloat(Float, std.mem.readIntBig(i16, ttf_mem[hhea + 6 ..][0..2])),
-        .line_gap = factor * @intToFloat(Float, std.mem.readIntBig(i16, ttf_mem[hhea + 8 ..][0..2])),
+        .ascender = factor * @as(Float, @floatFromInt(std.mem.readInt(i16, ttf_mem[hhea + 4 ..][0..2], .big))),
+        .descender = factor * @as(Float, @floatFromInt(std.mem.readInt(i16, ttf_mem[hhea + 6 ..][0..2], .big))),
+        .line_gap = factor * @as(Float, @floatFromInt(std.mem.readInt(i16, ttf_mem[hhea + 8 ..][0..2], .big))),
     };
 }
 
@@ -116,10 +121,10 @@ pub fn gmetrics(
     glyph: u32,
 ) !GMetrics {
     const hor = try horMetrics(ttf_mem, info, glyph);
-    const x_scale_em = scale.x / @intToFloat(Float, info.units_per_em);
+    const x_scale_em = scale.x / @as(Float, @floatFromInt(info.units_per_em));
 
-    const advance_width = @intToFloat(Float, hor.advance_width) * x_scale_em;
-    const left_side_bearing = @intToFloat(Float, hor.left_side_bearing) * x_scale_em + offset.x;
+    const advance_width = @as(Float, @floatFromInt(hor.advance_width)) * x_scale_em;
+    const left_side_bearing = @as(Float, @floatFromInt(hor.left_side_bearing)) * x_scale_em + offset.x;
 
     const outline = (try getOutlineOffset(ttf_mem, info, glyph)) orelse return GMetrics{
         .advance_width = advance_width,
@@ -131,14 +136,81 @@ pub fn gmetrics(
     const bbox = try getGlyphBbox(ttf_mem, info, scale, offset, outline);
     //std.debug.assert(bbox.x_min < bbox.x_max);
     //std.debug.assert(bbox.y_min < bbox.y_max);
-    const y_min = @floatToInt(i32, bbox.y_min);
-    const y_max = @floatToInt(i32, bbox.y_max);
+    const y_min: i32 = @intFromFloat(bbox.y_min);
+    const y_max: i32 = @intFromFloat(bbox.y_max);
     return GMetrics{
         .advance_width = advance_width,
         .left_side_bearing = left_side_bearing,
-        .min_width = @floatToInt(i32, bbox.x_max) - @floatToInt(i32, bbox.x_min) + 1,
+        .min_width = @as(i32, @intFromFloat(bbox.x_max)) - @as(i32, @intFromFloat(bbox.x_min)) + 1,
         .min_height = y_max - y_min + 1,
         .y_offset = if (downward) -y_max else y_min,
+    };
+}
+
+pub fn kerning(
+    ttf_mem: []const u8,
+    info: TtfInfo,
+    scale: XY(Float),
+    left_glyph: u32,
+    right_glyph: u32,
+) !XY(Float) {
+    var x_shift: Float = 0;
+    var y_shift: Float = 0;
+
+    var offset = try getTable(ttf_mem, "kern") orelse {
+        return .{ .x = 0, .y = 0 };
+    };
+
+    if (offset + 4 > ttf_mem.len)
+        return error.TtfBadKerning;
+    var num_tables = readTtf(u16, ttf_mem[offset + 2 ..]);
+    offset += 4;
+
+    while (num_tables > 0) : (num_tables -= 1) {
+        if (offset + 6 > ttf_mem.len)
+            return error.TtfBadKerning;
+
+        const length = readTtf(u16, ttf_mem[offset + 2 ..]);
+        const format = readTtf(u8, ttf_mem[offset + 4 ..]);
+        const flags = readTtf(u8, ttf_mem[offset + 5 ..]);
+        offset += 6;
+
+        if (format == 0 and
+            (flags & ttf.horizonal_kerning) != 0 and
+            (flags & ttf.minimum_kerning) == 0)
+        {
+            if (offset + 8 > ttf_mem.len)
+                return error.TtfBadKerning;
+
+            const num_pairs = readTtf(u16, ttf_mem[offset..]);
+            offset += 8;
+
+            const key: [4]u8 = .{
+                @intCast((left_glyph >> 8) & 0xFF),
+                @intCast(left_glyph & 0xFF),
+                @intCast((right_glyph >> 8) & 0xFF),
+                @intCast(right_glyph & 0xFF),
+            };
+
+            if (bsearch(&key, ttf_mem.ptr + offset, num_pairs, 6, cmpu32)) |match| {
+                const value = readTtf(
+                    i16,
+                    ttf_mem[@intFromPtr(match) - @intFromPtr(ttf_mem.ptr) + 4 ..],
+                );
+                if (flags & ttf.cross_stream_kerning != 0) {
+                    y_shift += @as(Float, value);
+                } else {
+                    x_shift += @as(Float, value);
+                }
+            }
+        }
+
+        offset += length;
+    }
+
+    return .{
+        .x = x_shift / @as(Float, info.units_per_em) * scale.x,
+        .y = y_shift / @as(Float, info.units_per_em) * scale.y,
     };
 }
 
@@ -155,7 +227,7 @@ pub fn render(
 ) !void {
     std.debug.assert(out_size.x >= 0);
     std.debug.assert(out_size.y >= 0);
-    std.debug.assert(out_pixels.len == @intCast(usize, out_size.x) * @intCast(usize, out_size.y));
+    std.debug.assert(out_pixels.len == @as(usize, @intCast(out_size.x)) * @as(usize, @intCast(out_size.y)));
 
     const outline_offset = (try getOutlineOffset(ttf_mem, info, glyph)) orelse return;
     const bbox = try getGlyphBbox(ttf_mem, info, scale, offset, outline_offset);
@@ -164,15 +236,15 @@ pub fn render(
     // the transformed bounding boxes min corner lines
     // up with the (0, 0) point.
     var transform: [6]Float = undefined;
-    transform[0] = scale.x / @intToFloat(Float, info.units_per_em);
+    transform[0] = scale.x / @as(Float, @floatFromInt(info.units_per_em));
     transform[1] = 0.0;
     transform[2] = 0.0;
     transform[4] = offset.x - bbox.x_min;
     if (downward) {
-        transform[3] = -scale.y / @intToFloat(Float, info.units_per_em);
+        transform[3] = -scale.y / @as(Float, @floatFromInt(info.units_per_em));
         transform[5] = bbox.y_max - offset.y;
     } else {
-        transform[3] = scale.y / @intToFloat(Float, info.units_per_em);
+        transform[3] = scale.y / @as(Float, @floatFromInt(info.units_per_em));
         transform[5] = offset.y - bbox.y_min;
     }
 
@@ -185,7 +257,7 @@ pub fn render(
 
 fn readTtf(comptime T: type, ttf_mem: []const u8) T {
     std.debug.assert(ttf_mem.len >= @sizeOf(T));
-    return std.mem.readIntBig(T, ttf_mem[0..@sizeOf(T)]);
+    return std.mem.readInt(T, ttf_mem[0..@sizeOf(T)], .big);
 }
 
 pub fn getTtfInfo(ttf_mem: []const u8) !TtfInfo {
@@ -271,8 +343,8 @@ fn bsearch(
     var next_base = base;
     var nel = nmemb;
     while (nel > 0) {
-        const t = @ptrCast([*]const u8, next_base) + size * (nel / 2);
-        const s = compar(@ptrCast([*]const u8, key), t);
+        const t = next_base + size * (nel / 2);
+        const s = compar(key, t);
         if (s < 0) {
             nel /= 2;
         } else if (s > 0) {
@@ -295,13 +367,13 @@ fn csearch(
 ) ?[*]const u8 {
     if (nmemb == 0) return null;
 
-    const bytes = @ptrCast([*]const u8, base);
+    const bytes = base;
     var low: usize = 0;
     var high: usize = nmemb - 1;
     while (low != high) {
         const mid = low + (high - low) / 2;
         const sample = bytes + mid * size;
-        if (compar(@ptrCast([*]const u8, key), sample) > 0) {
+        if (compar(key, sample) > 0) {
             low = mid + 1;
         } else {
             high = mid;
@@ -329,14 +401,15 @@ fn cmpu32(a: [*]const u8, b: [*]const u8) i2 {
     return memcmp(a, b, 4);
 }
 
-fn getTable(ttf_mem: []const u8, tag: *const [4]u8) !?u32 {
+const GetTableError = error{ TtfBadTables };
+fn getTable(ttf_mem: []const u8, tag: *const [4]u8) GetTableError!?u32 {
     // No need to bounds-check access to the first 12 bytes - this gets already checked by init_font().
     const num_tables = readTtf(u16, ttf_mem[4..]);
-    const limit = 12 + @intCast(usize, num_tables) * 16;
+    const limit = 12 + @as(usize, num_tables) * 16;
     if (limit > ttf_mem.len)
         return error.TtfBadTables;
     const match_ptr = bsearch(tag, ttf_mem.ptr + 12, num_tables, 16, cmpu32) orelse return null;
-    return readTtf(u32, match_ptr[8 .. 12]);
+    return readTtf(u32, match_ptr[8..12]);
 }
 
 fn cmapFmt4(ttf_mem: []const u8, table: usize, char_code: u32) !u32 {
@@ -361,11 +434,11 @@ fn cmapFmt4(ttf_mem: []const u8, table: usize, char_code: u32) !u32 {
     // Find the segment that contains shortCode by binary searching over
     // the highest codes in the segments.
     const key = [2]u8{
-        @intCast(u8, (char_code >> 8) & 0xff),
-        @intCast(u8, (char_code >> 0) & 0xff),
+        @intCast((char_code >> 8) & 0xff),
+        @intCast((char_code >> 0) & 0xff),
     };
-    const seg_addr = @ptrToInt(csearch(&key, ttf_mem.ptr + end_codes, seg_count_x2 / 2, 2, cmpu16));
-    const seg_idx_x2 = seg_addr - (@ptrToInt(ttf_mem.ptr) + end_codes);
+    const seg_addr = @intFromPtr(csearch(&key, ttf_mem.ptr + end_codes, seg_count_x2 / 2, 2, cmpu16));
+    const seg_idx_x2 = seg_addr - (@intFromPtr(ttf_mem.ptr) + end_codes);
     // Look up segment info from the arrays & short circuit if the spec requires.
     const start_code = readTtf(u16, ttf_mem[start_codes + seg_idx_x2 ..]);
     if (start_code > char_code)
@@ -389,7 +462,7 @@ fn cmapFmt4(ttf_mem: []const u8, table: usize, char_code: u32) !u32 {
 fn cmapFmt12_13(table: []const u8, char_code: u32, which: c_int) !u32 {
     if (table.len < 16)
         return error.TtfBadCmapTable;
-    const num_entries = @intCast(usize, readTtf(u32, table[12..]));
+    const num_entries: usize = @intCast(readTtf(u32, table[12..]));
     if (16 + 12 * num_entries > table.len)
         return error.TtfBadCmapTable;
     var i: usize = 0;
@@ -482,14 +555,14 @@ fn horMetrics(ttf_mem: []const u8, info: TtfInfo, glyph: u32) !HorMetrics {
     }
 
     // glyph is inside short metrics segment.
-    const boundary = hmtx + 4 * @intCast(usize, info.num_long_hmtx);
+    const boundary = hmtx + 4 * @as(usize, info.num_long_hmtx);
     if (boundary < 4)
         return error.TtfBadHmtxTable;
 
     const width_offset = boundary - 4;
     if (width_offset + 2 > ttf_mem.len)
         return error.TtfBadHmtxTable;
-    const bearing_offset = boundary + 2 * @intCast(usize, glyph - info.num_long_hmtx);
+    const bearing_offset = boundary + 2 * @as(usize, glyph - info.num_long_hmtx);
     if (bearing_offset + 2 > ttf_mem.len)
         return error.TtfBadHmtxTable;
     return .{
@@ -515,18 +588,23 @@ fn getGlyphBbox(ttf_mem: []const u8, info: TtfInfo, scale: XY(Float), offset: XY
     };
     if (box[2] <= box[0] or box[3] <= box[1])
         return error.TtfBadBbox;
-    const x_scale_em = scale.x / @intToFloat(Float, info.units_per_em);
-    const y_scale_em = scale.y / @intToFloat(Float, info.units_per_em);
+    const x_scale_em = scale.x / @as(Float, @floatFromInt(info.units_per_em));
+    const y_scale_em = scale.y / @as(Float, @floatFromInt(info.units_per_em));
     return Bbox{
-        .x_min = @floor(@intToFloat(Float, box[0]) * x_scale_em + offset.x),
-        .x_max = @ceil(@intToFloat(Float, box[2]) * x_scale_em + offset.x),
-        .y_min = @floor(@intToFloat(Float, box[1]) * y_scale_em + offset.y),
-        .y_max = @ceil(@intToFloat(Float, box[3]) * y_scale_em + offset.y),
+        .x_min = @floor(@as(Float, @floatFromInt(box[0])) * x_scale_em + offset.x),
+        .x_max = @ceil(@as(Float, @floatFromInt(box[2])) * x_scale_em + offset.x),
+        .y_min = @floor(@as(Float, @floatFromInt(box[1])) * y_scale_em + offset.y),
+        .y_max = @ceil(@as(Float, @floatFromInt(box[3])) * y_scale_em + offset.y),
     };
 }
 
+const GetOutlineOffsetError = GetTableError || error {
+    TtfNoLocaTable,
+    TtfBadLocaTable,
+    TtfNoGlyfTable,
+};
 // Returns the offset into the font that the glyph's outline is stored at.
-fn getOutlineOffset(ttf_mem: []const u8, info: TtfInfo, glyph: u32) !?usize {
+fn getOutlineOffset(ttf_mem: []const u8, info: TtfInfo, glyph: u32) GetOutlineOffsetError!?usize {
     const loca: usize = (try getTable(ttf_mem, "loca")) orelse
         return error.TtfNoLocaTable;
     const glyf: usize = (try getTable(ttf_mem, "glyf")) orelse
@@ -581,12 +659,12 @@ fn simpleFlags(ttf_mem: []const u8, offset: usize, num_pts: u16, flags: []u8) !u
 }
 
 fn resolveSign(comptime T: type, is_pos: bool, value: T) T {
-    const all_ones = @bitCast(T, switch (T) {
+    const all_ones: T = @bitCast(switch (T) {
         i32 => @as(u32, 0xffffffff),
         else => @compileError("not implemented"),
     });
     const xor_mask = if (is_pos) all_ones else 0;
-    return (value ^ xor_mask) + @as(T, @boolToInt(is_pos));
+    return (value ^ xor_mask) + @as(T, @intFromBool(is_pos));
 }
 
 // For a 'simple' outline, decodes both X and Y coordinates for each point of the outline. */
@@ -616,7 +694,7 @@ fn simplePoints(
                 accum += readTtf(i16, ttf_mem[off..]);
                 off += 2;
             }
-            points[i].x = @intToFloat(Float, accum);
+            points[i].x = @as(Float, @floatFromInt(accum));
         }
     }
 
@@ -637,7 +715,7 @@ fn simplePoints(
                 accum += readTtf(i16, ttf_mem[off..]);
                 off += 2;
             }
-            points[i].y = @intToFloat(Float, accum);
+            points[i].y = @as(Float, @floatFromInt(accum));
         }
     }
 }
@@ -729,13 +807,18 @@ fn stackBuf(comptime T: type, comptime stack_len: usize) StackBuf(T, stack_len) 
     return .{};
 }
 
+const SimpleOutlineError = error {
+    OutOfMemory,
+    TtfTooManyPoints,
+    TtfBadOutline,
+};
 fn simpleOutline(
     allocator: std.mem.Allocator,
     ttf_mem: []const u8,
     offset_start: usize,
     num_contours: u15,
     outl: *Outline,
-) !void {
+) SimpleOutlineError!void {
     std.debug.assert(num_contours > 0);
     const base_point = std.math.cast(u16, outl.points.items.len) orelse return error.TtfTooManyPoints;
 
@@ -743,10 +826,10 @@ fn simpleOutline(
     if (limit > ttf_mem.len)
         return error.TtfBadOutline;
     const num_pts = blk: {
-        var num = readTtf(u16, ttf_mem[offset_start + (num_contours - 1) * 2..]);
+        const num = readTtf(u16, ttf_mem[offset_start + (num_contours - 1) * 2 ..]);
         break :blk add(u16, num, 1) orelse return error.TtfBadOutline;
     };
-    if (outl.points.items.len + @intCast(usize, num_pts) > std.math.maxInt(u16))
+    if (outl.points.items.len + @as(usize, num_pts) > std.math.maxInt(u16))
         return error.TtfBadOutline;
     const new_points_len = add(u16, base_point, num_pts) orelse return error.TtfTooManyPoints;
     try outl.points.ensureTotalCapacity(allocator, new_points_len);
@@ -810,6 +893,14 @@ fn simpleOutline(
     }
 }
 
+const OutlineError = SimpleOutlineError || error {
+    TtfOutlineTooRecursive,
+    TtfPointMatchingNotSupported,
+    TtfBadTables,
+    TtfNoLocaTable,
+    TtfBadLocaTable,
+    TtfNoGlyfTable,
+};
 fn compoundOutline(
     allocator: std.mem.Allocator,
     ttf_mem: []const u8,
@@ -817,7 +908,7 @@ fn compoundOutline(
     offset_start: usize,
     rec_depth: u8,
     outl: *Outline,
-) !void {
+) OutlineError!void {
     // Guard against infinite recursion (compound glyphs that have themselves as component).
     if (rec_depth >= 4)
         return error.TtfOutlineTooRecursive;
@@ -826,8 +917,8 @@ fn compoundOutline(
         var local = [_]Float{0} ** 6;
         if (offset + 4 > ttf_mem.len)
             return error.TtfBadOutline;
-        const flags = readTtf(u16, ttf_mem[offset + 0..]);
-        const glyph = readTtf(u16, ttf_mem[offset + 2..]);
+        const flags = readTtf(u16, ttf_mem[offset + 0 ..]);
+        const glyph = readTtf(u16, ttf_mem[offset + 2 ..]);
         offset += 4;
         // We don't implement point matching, and neither does stb_truetype for that matter.
         if (0 == (flags & ttf.actual_xy_offsets))
@@ -836,35 +927,35 @@ fn compoundOutline(
         if (0 != (flags & ttf.offsets_are_large)) {
             if (offset + 4 > ttf_mem.len)
                 return error.TtfBadOutline;
-            local[4] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 0..]));
-            local[5] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 2..]));
+            local[4] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 0 ..])));
+            local[5] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 2 ..])));
             offset += 4;
         } else {
             if (offset + 2 > ttf_mem.len)
                 return error.TtfBadOutline;
-            local[4] = @intToFloat(Float, @bitCast(i8, ttf_mem[offset + 0]));
-            local[5] = @intToFloat(Float, @bitCast(i8, ttf_mem[offset + 1]));
+            local[4] = @floatFromInt(@as(i8, @bitCast(ttf_mem[offset + 0])));
+            local[5] = @floatFromInt(@as(i8, @bitCast(ttf_mem[offset + 1])));
             offset += 2;
         }
         if (0 != (flags & ttf.got_a_single_scale)) {
             if (offset + 2 > ttf_mem.len)
                 return error.TtfBadOutline;
-            local[0] = @intToFloat(Float, readTtf(i16, ttf_mem[offset..])) / 16384.0;
+            local[0] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset..]))) / 16384.0;
             local[3] = local[0];
             offset += 2;
         } else if (0 != (flags & ttf.got_an_x_and_y_scale)) {
             if (offset + 4 > ttf_mem.len)
                 return error.TtfBadOutline;
-            local[0] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 0..])) / 16384.0;
-            local[3] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 2..])) / 16384.0;
+            local[0] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 0 ..]))) / 16384.0;
+            local[3] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 2 ..]))) / 16384.0;
             offset += 4;
         } else if (0 != (flags & ttf.got_a_scale_matrix)) {
             if (offset + 8 > ttf_mem.len)
                 return error.TtfBadOutline;
-            local[0] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 0..])) / 16384.0;
-            local[1] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 2..])) / 16384.0;
-            local[2] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 4..])) / 16384.0;
-            local[3] = @intToFloat(Float, readTtf(i16, ttf_mem[offset + 6..])) / 16384.0;
+            local[0] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 0 ..]))) / 16384.0;
+            local[1] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 2 ..]))) / 16384.0;
+            local[2] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 4 ..]))) / 16384.0;
+            local[3] = @as(Float, @floatFromInt(readTtf(i16, ttf_mem[offset + 6 ..]))) / 16384.0;
             offset += 8;
         } else {
             local[0] = 1.0;
@@ -891,13 +982,13 @@ fn decodeOutline(
     offset: usize,
     rec_depth: u8,
     outl: *Outline,
-) !void {
+) OutlineError!void {
     if (offset + 10 > ttf_mem.len)
         return error.TtfBadOutline;
     const num_contours = readTtf(i16, ttf_mem[offset..]);
     if (num_contours > 0) {
         // Glyph has a 'simple' outline consisting of a number of contours.
-        return simpleOutline(allocator, ttf_mem, offset + 10, @intCast(u15, num_contours), outl);
+        return simpleOutline(allocator, ttf_mem, offset + 10, @intCast(num_contours), outl);
     } else if (num_contours < 0) {
         // Glyph has a compound outline combined from mutiple other outlines.
         return compoundOutline(allocator, ttf_mem, info, offset + 10, rec_depth, outl);
@@ -912,7 +1003,7 @@ fn isFlat(outline: Outline, curve: Curve) bool {
     const cpoint = outline.points.items.ptr[curve.end];
     const g = Point{ .x = b.x - a.x, .y = b.y - a.y };
     const h = Point{ .x = cpoint.x - a.x, .y = cpoint.y - a.y };
-    const area2 = std.math.fabs(g.x * h.y - h.x * g.y);
+    const area2 = @abs(g.x * h.y - h.x * g.y);
     return area2 <= max_area2;
 }
 
@@ -960,10 +1051,10 @@ fn sign(x: Float) i2 {
     return 0;
 }
 fn fastFloor(x: Float) c_int {
-    return @floatToInt(c_int, std.math.floor(x));
+    return @intFromFloat(std.math.floor(x));
 }
 fn fastCeil(x: Float) c_int {
-    return @floatToInt(c_int, std.math.ceil(x));
+    return @intFromFloat(std.math.ceil(x));
 }
 
 // Draws a line into the buffer. Uses a custom 2D raycasting algorithm to do so.
@@ -981,8 +1072,8 @@ fn drawLine(buf: Raster, origin: Point, goal: Point) void {
         return;
     }
     const crossingIncr = Point{
-        .x = if (dir.x != 0) std.math.fabs(1.0 / delta.x) else 1.0,
-        .y = std.math.fabs(1.0 / delta.y),
+        .x = if (dir.x != 0) @abs(1.0 / delta.x) else 1.0,
+        .y = @abs(1.0 / delta.y),
     };
 
     var pixel: struct { x: i32, y: i32 } = undefined;
@@ -994,38 +1085,38 @@ fn drawLine(buf: Raster, origin: Point, goal: Point) void {
     } else {
         if (dir.x > 0) {
             pixel.x = fastFloor(origin.x);
-            next_crossing.x = (origin.x - @intToFloat(Float, pixel.x)) * crossingIncr.x;
+            next_crossing.x = (origin.x - @as(Float, @floatFromInt(pixel.x))) * crossingIncr.x;
             next_crossing.x = crossingIncr.x - next_crossing.x;
             num_steps += fastCeil(goal.x) - fastFloor(origin.x) - 1;
         } else {
             pixel.x = fastCeil(origin.x) - 1;
-            next_crossing.x = (origin.x - @intToFloat(Float, pixel.x)) * crossingIncr.x;
+            next_crossing.x = (origin.x - @as(Float, @floatFromInt(pixel.x))) * crossingIncr.x;
             num_steps += fastCeil(origin.x) - fastFloor(goal.x) - 1;
         }
     }
 
     if (dir.y > 0) {
         pixel.y = fastFloor(origin.y);
-        next_crossing.y = (origin.y - @intToFloat(Float, pixel.y)) * crossingIncr.y;
+        next_crossing.y = (origin.y - @as(Float, @floatFromInt(pixel.y))) * crossingIncr.y;
         next_crossing.y = crossingIncr.y - next_crossing.y;
         num_steps += fastCeil(goal.y) - fastFloor(origin.y) - 1;
     } else {
         pixel.y = fastCeil(origin.y) - 1;
-        next_crossing.y = (origin.y - @intToFloat(Float, pixel.y)) * crossingIncr.y;
+        next_crossing.y = (origin.y - @as(Float, @floatFromInt(pixel.y))) * crossingIncr.y;
         num_steps += fastCeil(origin.y) - fastFloor(goal.y) - 1;
     }
 
-    var next_distance = std.math.min(next_crossing.x, next_crossing.y);
+    var next_distance = @min(next_crossing.x, next_crossing.y);
     const half_delta_x = 0.5 * delta.x;
     var prev_distance: Float = 0.0;
     var step: c_int = 0;
     while (step < num_steps) : (step += 1) {
         var x_average = origin.x + (prev_distance + next_distance) * half_delta_x;
         const y_difference = (next_distance - prev_distance) * delta.y;
-        const cptr = &buf.cells[@intCast(usize, pixel.y * buf.size.x + pixel.x)];
+        const cptr = &buf.cells[@intCast(pixel.y * buf.size.x + pixel.x)];
         var cell = cptr.*;
         cell.cover += y_difference;
-        x_average -= @intToFloat(Float, pixel.x);
+        x_average -= @as(Float, @floatFromInt(pixel.x));
         cell.area += (1.0 - x_average) * y_difference;
         cptr.* = cell;
         prev_distance = next_distance;
@@ -1034,15 +1125,15 @@ fn drawLine(buf: Raster, origin: Point, goal: Point) void {
         pixel.y += if (along_x) 0 else dir.y;
         next_crossing.x += if (along_x) crossingIncr.x else 0.0;
         next_crossing.y += if (along_x) 0.0 else crossingIncr.y;
-        next_distance = std.math.min(next_crossing.x, next_crossing.y);
+        next_distance = @min(next_crossing.x, next_crossing.y);
     }
 
     var x_average = origin.x + (prev_distance + 1.0) * half_delta_x;
     const y_difference = (1.0 - prev_distance) * delta.y;
-    const cptr = &buf.cells[@intCast(usize, pixel.y * buf.size.x + pixel.x)];
+    const cptr = &buf.cells[@intCast(pixel.y * buf.size.x + pixel.x)];
     var cell = cptr.*;
     cell.cover += y_difference;
-    x_average -= @intToFloat(Float, pixel.x);
+    x_average -= @as(Float, @floatFromInt(pixel.x));
     cell.area += (1.0 - x_average) * y_difference;
     cptr.* = cell;
 }
@@ -1060,14 +1151,14 @@ fn drawLines(outline: *Outline, buf: Raster) void {
 // Integrate the values in the buffer to arrive at the final grayscale image.
 fn postProcess(buf: Raster, image: [*]u8) void {
     var accum: Float = 0;
-    const num = @intCast(usize, buf.size.x) * @intCast(usize, buf.size.y);
+    const num = @as(usize, @intCast(buf.size.x)) * @as(usize, @intCast(buf.size.y));
     var i: usize = 0;
     while (i < num) : (i += 1) {
         const cell = buf.cells[i];
-        var value = std.math.fabs(accum + cell.area);
-        value = std.math.min(value, 1.0);
+        var value = @abs(accum + cell.area);
+        value = @min(value, 1.0);
         value = value * 255.0 + 0.5;
-        image[i] = @floatToInt(u8, value);
+        image[i] = @intFromFloat(value);
         accum += cell.cover;
     }
 }
@@ -1082,8 +1173,8 @@ fn renderOutline(
     transformPoints(outl.points.items.ptr[0..outl.points.items.len], transform);
     clipPoints(
         outl.points.items.ptr[0..outl.points.items.len],
-        @intToFloat(Float, size.x),
-        @intToFloat(Float, size.y),
+        @as(Float, @floatFromInt(size.x)),
+        @as(Float, @floatFromInt(size.y)),
     );
 
     {
@@ -1093,7 +1184,7 @@ fn renderOutline(
         }
     }
 
-    const num_pixels = @intCast(usize, size.x) * @intCast(usize, size.y);
+    const num_pixels = @as(usize, @intCast(size.x)) * @as(usize, @intCast(size.y));
     // TODO: the following commented line should work but the zig compiler
     //       isn't optimizing it correctly which causes *extreme* slowdown
     // Zig's 'undefined' debug checks make this ungodly slow
@@ -1105,7 +1196,7 @@ fn renderOutline(
     defer CellBuf.free(allocator, cells);
 
     // TODO: I wonder if this could be removed?
-    @memset(@ptrCast([*]u8, cells), 0, num_pixels * @sizeOf(@TypeOf(cells[0])));
+    @memset(@as([*]u8, @ptrCast(cells))[0 .. num_pixels * @sizeOf(@TypeOf(cells[0]))], 0);
     const buf = Raster{
         .cells = cells,
         .size = size,

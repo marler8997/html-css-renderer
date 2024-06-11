@@ -138,14 +138,14 @@ fn consume(self: *HtmlTokenizer) !void {
         return;
     }
     const len = try std.unicode.utf8CodepointSequenceLength(self.ptr[0]);
-    if (@ptrToInt(self.ptr) + len > @ptrToInt(self.limit))
+    if (@intFromPtr(self.ptr) + len > @intFromPtr(self.limit))
         return error.Utf8TruncatedInput;
     self.current_input_character = .{ .len = len, .val = try std.unicode.utf8Decode(self.ptr[0 .. len]) };
     self.ptr += len;
 }
 
 pub fn next(self: *HtmlTokenizer) !?Token {
-    //std.log.info("next: offset={}", .{@ptrToInt(self.ptr) - @ptrToInt(self.start)});
+    //std.log.info("next: offset={}", .{@intFromPtr(self.ptr) - @intFromPtr(self.start)});
     if (self.deferred_token) |t| {
         const token_copy = t;
         self.deferred_token = null;
@@ -170,10 +170,10 @@ fn next2(self: *HtmlTokenizer) !?struct {
                 switch (self.current_input_character.val) {
                     //'&' => {} we don't process character references in the tokenizer
                     '<' => self.state = .{
-                        .tag_open = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                        .tag_open = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                     },
                     0 => {
-                        const limit = @ptrToInt(self.ptr) - @ptrToInt(self.start);
+                        const limit = @intFromPtr(self.ptr) - @intFromPtr(self.start);
                         return .{
                             .token = .{ .parse_error = .unexpected_null_character },
                             .deferred = .{ .char = .{
@@ -183,7 +183,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         };
                     },
                     else => {
-                        const limit = @ptrToInt(self.ptr) - @ptrToInt(self.start);
+                        const limit = @intFromPtr(self.ptr) - @intFromPtr(self.start);
                         return .{ .token = .{ .char = .{
                             .start = limit - self.current_input_character.len,
                             .limit = limit,
@@ -195,7 +195,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                 try self.consume();
                 if (self.current_input_character.len == 0) {
                     self.state = .eof;
-                    const limit = @ptrToInt(self.ptr) - @ptrToInt(self.start);
+                    const limit = @intFromPtr(self.ptr) - @intFromPtr(self.start);
                     return .{
                         .token = .{ .parse_error = .eof_before_tag_name },
                         .deferred = .{ .char = .{
@@ -212,7 +212,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.state = .{
                             .tag_name = .{
                                 .is_end = false,
-                                .start = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                                .start = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                             },
                         };
                     } else {
@@ -255,7 +255,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.state = .{
                             .tag_name = .{
                                 .is_end = true,
-                                .start = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                                .start = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                             },
                         };
                     } else {
@@ -275,7 +275,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.state = .before_attribute_name;
                         const name_span = Span{
                             .start = tag_state.start,
-                            .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                            .limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                         };
                         return
                             if (tag_state.is_end) .{ .token = .{ .end_tag = name_span } }
@@ -286,7 +286,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.state = .data;
                         const name_span = Span{
                             .start = tag_state.start,
-                            .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                            .limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                         };
                         return
                             if (tag_state.is_end) .{ .token = .{ .end_tag = name_span } }
@@ -306,7 +306,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.state = .data;
                         return .{ .token = .{
                             // TODO: can we assume the start will be 2 bytes back?
-                            .start_tag_self_closed = @ptrToInt(self.ptr) - 2 - @ptrToInt(self.start),
+                            .start_tag_self_closed = @intFromPtr(self.ptr) - 2 - @intFromPtr(self.start),
                         }};
                     },
                     else => {
@@ -331,7 +331,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         return error.NotImpl;
                     },
                     else => self.state = .{
-                        .attribute_name = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                        .attribute_name = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                     },
                 }
             },
@@ -344,12 +344,12 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         self.ptr -= self.current_input_character.len;
                         // TODO: pass something to after_attribute_name like start/limit?
                         //    .start = start,
-                        //    .limit = @ptrToInt(self.ptr) - @ptrToInt(self.start),
+                        //    .limit = @intFromPtr(self.ptr) - @intFromPtr(self.start),
                         self.state = .after_attribute_name;
                     },
                     '=' => self.state = .{ .before_attribute_value = .{
                         .start = start,
-                        .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                        .limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                     }},
                     '"', '\'', '<' => return .{ .token = .{ .parse_error = .unexpected_character_in_attribute_name } },
                     else => {},
@@ -365,12 +365,12 @@ fn next2(self: *HtmlTokenizer) !?struct {
                     '"' => self.state = .{ .attribute_value = .{
                         .name_raw = name_span,
                         .quote = .double,
-                        .start = @ptrToInt(self.ptr) - @ptrToInt(self.start),
+                        .start = @intFromPtr(self.ptr) - @intFromPtr(self.start),
                     } },
                     '\'' => self.state = .{ .attribute_value = .{
                         .name_raw = name_span,
                         .quote = .single,
-                        .start = @ptrToInt(self.ptr) - @ptrToInt(self.start),
+                        .start = @intFromPtr(self.ptr) - @intFromPtr(self.start),
                     } },
                     '>' => {
                         self.state = .data;
@@ -402,7 +402,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                                 .name_raw = attr_state.name_raw,
                                 .value_raw = .{
                                     .start = attr_state.start,
-                                    .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                                    .limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                                 },
                             }}};
                         },
@@ -440,7 +440,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
             .markup_declaration_open => {
                 if (self.nextCharsAre("--")) {
                     self.ptr += 2;
-                    self.state = .{ .comment_start = @ptrToInt(self.ptr) - @ptrToInt(self.start) };
+                    self.state = .{ .comment_start = @intFromPtr(self.ptr) - @intFromPtr(self.start) };
                 } else if (self.nextCharsAre(DOCTYPE)) {
                     self.ptr += DOCTYPE.len;
                     self.state = .doctype;
@@ -495,7 +495,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                     '\t', '\n', form_feed, ' ' => {},
                     0 => {
                         self.state = .{ .doctype_name = .{
-                            .name_offset = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                            .name_offset = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                         }};
                         return .{ .token = .{ .parse_error = .unexpected_null_character } };
                     },
@@ -510,7 +510,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                     else => {
                         // NOTE: same thing for isAsciiAlphaUpper since we post-process the name
                         self.state = .{ .doctype_name = .{
-                            .name_offset = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                            .name_offset = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                         }};
                     }
                 }
@@ -531,7 +531,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                     '\t', '\n', form_feed, ' ' => {
                         self.state = .{ .after_doctype_name = .{
                             .name_offset = doctype_state.name_offset,
-                            .name_limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                            .name_limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                         }};
                     },
                     '>' => {
@@ -539,7 +539,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         return .{ .token = .{ .doctype = .{
                             .name_raw = .{
                                 .start = doctype_state.name_offset,
-                                .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                                .limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                             },
                             .force_quirks = false,
                         }}};
@@ -579,7 +579,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                         .token = .{ .parse_error = .eof_in_comment },
                         .deferred = .{ .comment = .{
                             .start = comment_start,
-                            .limit = @ptrToInt(self.ptr) - @ptrToInt(self.start),
+                            .limit = @intFromPtr(self.ptr) - @intFromPtr(self.start),
                         } },
                     };
                 }
@@ -587,7 +587,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
                     '<' => return error.NotImpl,
                     '-' => self.state = .{ .comment_end_dash = .{
                         .start = comment_start,
-                        .limit = @ptrToInt(self.ptr) - self.current_input_character.len - @ptrToInt(self.start),
+                        .limit = @intFromPtr(self.ptr) - self.current_input_character.len - @intFromPtr(self.start),
                     }},
                     0 => return error.NotImpl,
                     else => {},
@@ -638,7 +638,7 @@ fn next2(self: *HtmlTokenizer) !?struct {
 }
 
 fn nextCharsAre(self: HtmlTokenizer, s: []const u8) bool {
-    return (@ptrToInt(self.ptr) + s.len <= @ptrToInt(self.limit)) and
+    return (@intFromPtr(self.ptr) + s.len <= @intFromPtr(self.limit)) and
         std.mem.eql(u8, self.ptr[0 .. s.len], s);
 }
 

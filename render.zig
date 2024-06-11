@@ -30,13 +30,13 @@ pub fn render(
     ctx: Ctx,
 ) !void {
     _ = html;
-    
+
     var next_color_index: usize = 0;
     var next_no_relative_position_box_y: i32 = 200;
 
     var current_box_content_pos = XY(i32){ .x = 0, .y = 0 };
 
-    for (layout_nodes) |node, node_index| switch (node) {
+    for (layout_nodes, 0..) |node, node_index| switch (node) {
         .box => |b| {
             if (b.content_size.x.getResolved() == null or b.content_size.y.getResolved() == null) {
                 std.log.warn("box size at index {} not resolved, should be impossible once fully implemented", .{node_index});
@@ -49,11 +49,11 @@ pub fn render(
                 const color = unique_colors[next_color_index];
                 next_color_index = (next_color_index + 1) % unique_colors.len;
 
-                const x = current_box_content_pos.x + @intCast(i32, b.relative_content_pos.x);
+                const x = current_box_content_pos.x + @as(i32, @intCast(b.relative_content_pos.x));
                 {
-                    const y = current_box_content_pos.y + @intCast(i32, b.relative_content_pos.y);
+                    const y = current_box_content_pos.y + @as(i32, @intCast(b.relative_content_pos.y));
                     try onRender(ctx, .{ .rect = .{
-                        .x = @intCast(u32, x), .y = @intCast(u32, y),
+                        .x = @intCast(x), .y = @intCast(y),
                         .w = content_size.x, .h = content_size.y,
                         .fill = true, .color = color,
                     }});
@@ -61,11 +61,11 @@ pub fn render(
 
                 const explode_view = true;
                 if (explode_view) {
-                    var y = next_no_relative_position_box_y;
-                    next_no_relative_position_box_y += @intCast(i32, content_size.y) + 5;
+                    const y = next_no_relative_position_box_y;
+                    next_no_relative_position_box_y += @as(i32, @intCast(content_size.y)) + 5;
 
                     try onRender(ctx, .{ .rect = .{
-                        .x = @intCast(u32, x), .y = @intCast(u32, y),
+                        .x = @intCast(x), .y = @intCast(y),
                         .w = content_size.x, .h = content_size.y,
                         .fill = false, .color = color,
                     }});
@@ -85,15 +85,15 @@ pub fn render(
                     ) catch unreachable;
                     const font_size = 10;
                     try onRender(ctx, .{ .text = .{
-                        .x = @intCast(u32, x)+1, .y = @intCast(u32, y)+1,
+                        .x = @as(u32, @intCast(x))+1, .y = @as(u32, @intCast(y))+1,
                         .size = font_size, .slice = msg,
                     }});
                 }
             }
 
             current_box_content_pos = .{
-                .x = current_box_content_pos.x + @intCast(i32, b.relative_content_pos.x),
-                .y = current_box_content_pos.y + @intCast(i32, b.relative_content_pos.y),
+                .x = current_box_content_pos.x + @as(i32, @intCast(b.relative_content_pos.x)),
+                .y = current_box_content_pos.y + @as(i32, @intCast(b.relative_content_pos.y)),
             };
         },
         .end_box => |box_index| {
@@ -102,8 +102,8 @@ pub fn render(
                 else => unreachable,
             };
             current_box_content_pos = .{
-                .x = current_box_content_pos.x - @intCast(i32, b.relative_content_pos.x),
-                .y = current_box_content_pos.y - @intCast(i32, b.relative_content_pos.y),
+                .x = current_box_content_pos.x - @as(i32, @intCast(b.relative_content_pos.x)),
+                .y = current_box_content_pos.y - @as(i32, @intCast(b.relative_content_pos.y)),
             };
         },
         .text => |t| {
@@ -111,20 +111,20 @@ pub fn render(
 
             const first_line = line_it.first();
             // TODO: set this correctly
-            const abs_x_i32 = current_box_content_pos.x + @intCast(i32, t.relative_content_pos.x);
-            var abs_y_i32 = current_box_content_pos.y + @intCast(i32, t.relative_content_pos.y);
+            const abs_x_i32 = current_box_content_pos.x + @as(i32, @intCast(t.relative_content_pos.x));
+            var abs_y_i32 = current_box_content_pos.y + @as(i32, @intCast(t.relative_content_pos.y));
             // TODO: abs_x should be signed
-            const abs_x_u32 = @intCast(u32, abs_x_i32);
+            const abs_x_u32: u32 = @intCast(abs_x_i32);
             // TODO: abs_y should be signed
-            var abs_y_u32 = @intCast(u32, abs_y_i32);
+            var abs_y_u32: u32 = @intCast(abs_y_i32);
             try onRender(ctx, .{ .text = .{ .x = abs_x_u32 + t.first_line_x, .y = abs_y_u32, .size = t.font.size, .slice = first_line.slice }});
             // TODO: this first_line_height won't be correct right now if there
             //       is another element after us on the same line with a bigger height
-            abs_y_i32 += @intCast(i32, t.first_line_height);
+            abs_y_i32 += @intCast(t.first_line_height);
             abs_y_u32 += t.first_line_height;
             while (line_it.next()) |line| {
                 try onRender(ctx, .{ .text = .{ .x = abs_x_u32, .y = abs_y_u32, .size = t.font.size, .slice = line.slice }});
-                abs_y_i32 += @intCast(i32, t.font.getLineHeight());
+                abs_y_i32 += @intCast(t.font.getLineHeight());
                 abs_y_u32 += t.font.getLineHeight();
             }
         },

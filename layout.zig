@@ -17,7 +17,7 @@ pub fn XY(comptime T: type) type {
 // border-box-size
 
 fn roundedMult(float: f32, int: anytype) @TypeOf(int) {
-    return @floatToInt(@TypeOf(int), @round(float * @intToFloat(f32, int)));
+    return @intFromFloat(@round(float * @as(f32, @floatFromInt(int))));
 }
 
 
@@ -74,7 +74,7 @@ pub const Styler = struct {
             else => @panic("todo or maybe unreachable?"),
         };
 
-        var style_size: XY(StyleSize) = blk: {
+        const style_size: XY(StyleSize) = blk: {
             switch (tag.id) {
                 .html => break :blk self.html.size,
                 .body => break :blk self.body.size,
@@ -86,7 +86,7 @@ pub const Styler = struct {
                 },
             }
         };
-        var mbp: MarginBorderPadding = blk: {
+        const mbp: MarginBorderPadding = blk: {
             switch (tag.id) {
                 .html => break :blk self.html.mbp,
                 .body => break :blk self.body.mbp,
@@ -290,7 +290,7 @@ pub fn layout(
     errdefer nodes.deinit(allocator);
 
     {
-        var viewport_content_size = XY(ContentSize){
+        const viewport_content_size = XY(ContentSize){
             .x = .{ .resolved = viewport_size.x },
             .y = .{ .resolved = viewport_size.y },
         };
@@ -498,7 +498,7 @@ fn endParentBox(
                     text_node.first_line_x = current_line.x;
                     opt_current_line = .{
                         .x = current_line.x + first_line.width,
-                        .max_height = std.math.max(current_line.max_height, text_node.font.getLineHeight()),
+                        .max_height = @max(current_line.max_height, text_node.font.getLineHeight()),
                     };
                     // TODO: this value wont' be correct if there is another element
                     //       come after us on the same line with a higher height.
@@ -527,7 +527,7 @@ pub const Font = struct {
     }
     pub fn getSpaceWidth(self: Font) u32 {
         // just a silly hueristic for now
-        return @floatToInt(u32, @intToFloat(f32, self.size) * 0.48);
+        return @intFromFloat(@as(f32, @floatFromInt(self.size)) * 0.48);
     }
 };
 
@@ -545,7 +545,7 @@ pub const TextLineIterator = struct {
 
     pub fn first(self: *TextLineIterator) TextLineResult {
         if (self.start_x == 0) {
-            var r = self.next() orelse unreachable;
+            const r = self.next() orelse unreachable;
             return .{ .slice = r.slice, .width = r.width };
         }
 

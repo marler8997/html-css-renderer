@@ -5,7 +5,7 @@ fn oom(e: error{OutOfMemory}) noreturn {
 }
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
-    std.os.exit(0xff);
+    std.process.exit(0xff);
 }
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

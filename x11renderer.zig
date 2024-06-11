@@ -1,8 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const x11 = @import("x11");
-const Memfd = x11.Memfd;
-const ContiguousReadBuffer = x11.ContiguousReadBuffer;
 
 const dom = @import("dom.zig");
 const layout = @import("layout.zig");
@@ -22,7 +20,7 @@ pub fn oom(e: error{OutOfMemory}) noreturn {
 
 pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
-    std.os.exit(0xff);
+    std.process.exit(0xff);
 }
 
 var windows_args_arena = if (builtin.os.tag == .windows)
@@ -32,11 +30,10 @@ pub fn cmdlineArgs() [][*:0]u8 {
     if (builtin.os.tag == .windows) {
         const slices = std.process.argsAlloc(windows_args_arena.allocator()) catch |err| switch (err) {
             error.OutOfMemory => oom(error.OutOfMemory),
-            error.InvalidCmdLine => @panic("InvalidCmdLine"),
             error.Overflow => @panic("Overflow while parsing command line"),
         };
         const args = windows_args_arena.allocator().alloc([*:0]u8, slices.len - 1) catch |e| oom(e);
-        for (slices[1..]) |slice, i| {
+        for (slices[1..], 0..) |slice, i| {
             args[i] = slice.ptr;
         }
         return args;
@@ -45,6 +42,7 @@ pub fn cmdlineArgs() [][*:0]u8 {
 }
 
 pub fn main() !u8 {
+    try x11.wsaStartup();
     const args = blk: {
         const all_args = cmdlineArgs();
         var non_option_len: usize = 0;
@@ -93,7 +91,7 @@ const ParseContext = struct {
 };
 
 fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
-    const context = @intToPtr(*ParseContext, @ptrToInt(context_ptr));
+    const context: *ParseContext = @alignCast(@ptrCast(context_ptr));
     std.io.getStdErr().writer().print("{s}: parse error: {s}\n", .{context.filename, msg}) catch |err|
         std.debug.panic("failed to print parse error with {s}", .{@errorName(err)});
 }
@@ -101,7 +99,7 @@ fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
 
 fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
     const conn = try connect(global_arena.allocator());
-    defer std.os.shutdown(conn.sock, .both) catch {};
+    defer x11.disconnect(conn.sock);
 
     const screen = blk: {
         const fixed = conn.setup.fixed();
@@ -113,10 +111,10 @@ fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
         const format_list_limit = x11.ConnectSetup.getFormatListLimit(format_list_offset, fixed.format_count);
         std.log.debug("fmt list off={} limit={}", .{format_list_offset, format_list_limit});
         const formats = try conn.setup.getFormatList(format_list_offset, format_list_limit);
-        for (formats) |format, i| {
+        for (formats, 0..) |format, i| {
             std.log.debug("format[{}] depth={:3} bpp={:3} scanpad={:3}", .{i, format.depth, format.bits_per_pixel, format.scanline_pad});
         }
-        var screen = conn.setup.getFirstScreenPtr(format_list_limit);
+        const screen = conn.setup.getFirstScreenPtr(format_list_limit);
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
@@ -205,21 +203,24 @@ fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
         try conn.send(&msg);
     }
 
-    const buf_memfd = try Memfd.init("ZigX11DoubleBuffer");
+    const double_buf = try x11.DoubleBuffer.init(
+        std.mem.alignForward(usize, 1000, std.mem.page_size),
+        .{ .memfd_name = "ZigX11DoubleBuffer" },
+    );
+    // double_buf.deinit() (not necessary)
+    std.log.info("read buffer capacity is {}", .{double_buf.half_len});
+    var buf = double_buf.contiguousReadBuffer();
     // no need to deinit
-    const buffer_capacity = std.mem.alignForward(1000, std.mem.page_size);
-    std.log.info("buffer capacity is {}", .{buffer_capacity});
-    var buf = ContiguousReadBuffer { .double_buffer_ptr = try buf_memfd.toDoubleBuffer(buffer_capacity), .half_size = buffer_capacity };
 
     const font_dims: FontDims = blk: {
-        _ = try x11.readOneMsg(conn.reader(), @alignCast(4, buf.nextReadBuffer()));
-        switch (x11.serverMsgTaggedUnion(@alignCast(4, buf.double_buffer_ptr))) {
+        _ = try x11.readOneMsg(conn.reader(), @alignCast(buf.nextReadBuffer()));
+        switch (x11.serverMsgTaggedUnion(@alignCast(buf.double_buffer_ptr))) {
             .reply => |msg_reply| {
-                const msg = @ptrCast(*x11.ServerMsg.QueryTextExtents, msg_reply);
+                const msg: *x11.ServerMsg.QueryTextExtents = @ptrCast(msg_reply);
                 break :blk .{
-                    .width = @intCast(u8, msg.overall_width),
-                    .height = @intCast(u8, msg.font_ascent + msg.font_descent),
-                    .font_left = @intCast(i16, msg.overall_left),
+                    .width = @intCast(msg.overall_width),
+                    .height = @intCast(msg.font_ascent + msg.font_descent),
+                    .font_left = @intCast(msg.overall_left),
                     .font_ascent = msg.font_ascent,
                 };
             },
@@ -244,10 +245,10 @@ fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
         {
             const recv_buf = buf.nextReadBuffer();
             if (recv_buf.len == 0) {
-                std.log.err("buffer size {} not big enough!", .{buf.half_size});
+                std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 return 1;
             }
-            const len = try std.os.recv(conn.sock, recv_buf, 0);
+            const len = try x11.readSock(conn.sock, recv_buf, 0);
             if (len == 0) {
                 std.log.info("X server connection closed", .{});
                 return 0;
@@ -256,12 +257,14 @@ fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
         }
         while (true) {
             const data = buf.nextReservedBuffer();
-            const msg_len = x11.parseMsgLen(@alignCast(4, data));
-            if (msg_len == 0)
+            if (data.len < 32)
+                break;
+            const msg_len = x11.parseMsgLen(data[0..32].*);
+            if (data.len < msg_len)
                 break;
             buf.release(msg_len);
             //buf.resetIfEmpty();
-            switch (x11.serverMsgTaggedUnion(@alignCast(4, data.ptr))) {
+            switch (x11.serverMsgTaggedUnion(@alignCast(data.ptr))) {
                 .err => |msg| {
                     std.log.err("{}", .{msg});
                     return 1;
@@ -307,6 +310,11 @@ fn renderNodes(html_content: []const u8, html_nodes: []const dom.Node) !u8 {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
                 },
+                .no_exposure,
+                .map_notify,
+                .reparent_notify,
+                .configure_notify,
+                => unreachable, // did not register for these
             }
         }
     }
@@ -320,7 +328,7 @@ const FontDims = struct {
 };
 
 fn doRender(
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     drawable_id: u32,
     //bg_gc_id: u32,
     fg_gc_id: u32,
@@ -352,7 +360,7 @@ fn doRender(
     };
     alext.unmanaged.finalize(layout.LayoutNode, &layout_nodes, arena.allocator());
 
-    var render_ctx = RenderCtx {
+    const render_ctx = RenderCtx {
         .sock = sock,
         .drawable_id = drawable_id,
         .fg_gc_id = fg_gc_id,
@@ -362,7 +370,7 @@ fn doRender(
 }
 
 const RenderCtx = struct {
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     drawable_id: u32,
     fg_gc_id: u32,
     font_dims: FontDims,
@@ -373,10 +381,10 @@ fn onRender(ctx: RenderCtx, op: render.Op) !void {
         .rect => |r| {
             try changeGcColor(ctx.sock, ctx.fg_gc_id, r.color, 0xffffff);
             const rectangles = [_]x11.Rectangle{.{
-                .x = @intCast(i16, r.x),
-                .y = @intCast(i16, r.y),
-                .width = @intCast(u16, r.w),
-                .height = @intCast(u16, r.h),
+                .x = @intCast(r.x),
+                .y = @intCast(r.y),
+                .width = @intCast(r.w),
+                .height = @intCast(r.h),
             }};
             if (r.fill) {
                 var msg: [x11.poly_fill_rectangle.getLen(rectangles.len)]u8 = undefined;
@@ -405,8 +413,8 @@ fn onRender(ctx: RenderCtx, op: render.Op) !void {
                 .{
                     .drawable_id = ctx.drawable_id,
                     .gc_id = ctx.fg_gc_id,
-                    .x = @intCast(i16, t.x),
-                    .y = @intCast(i16, t.y) + ctx.font_dims.font_ascent,
+                    .x = @intCast(t.x),
+                    .y = @as(i16, @intCast(t.y)) + ctx.font_dims.font_ascent,
                 },
             );
             try send(ctx.sock, msg[0 .. x11.image_text8.getLen(text_len)]);
@@ -414,7 +422,7 @@ fn onRender(ctx: RenderCtx, op: render.Op) !void {
     }
 }
 
-fn changeGcColor(sock: std.os.socket_t, gc_id: u32, fg_color: u32, bg_color: u32) !void {
+fn changeGcColor(sock: std.posix.socket_t, gc_id: u32, fg_color: u32, bg_color: u32) !void {
     var msg_buf: [x11.change_gc.max_len]u8 = undefined;
     const len = x11.change_gc.serialize(&msg_buf, gc_id, .{
         .foreground = fg_color,
@@ -423,10 +431,10 @@ fn changeGcColor(sock: std.os.socket_t, gc_id: u32, fg_color: u32, bg_color: u32
     try send(sock, msg_buf[0..len]);
 }
 
-pub const SocketReader = std.io.Reader(std.os.socket_t, std.os.RecvFromError, readSocket);
+pub const SocketReader = std.io.Reader(std.posix.socket_t, std.posix.RecvFromError, readSocket);
 
-pub fn send(sock: std.os.socket_t, data: []const u8) !void {
-    const sent = try std.os.send(sock, data, 0);
+pub fn send(sock: std.posix.socket_t, data: []const u8) !void {
+    const sent = try x11.writeSock(sock, data, 0);
     if (sent != data.len) {
         std.log.err("send {} only sent {}\n", .{data.len, sent});
         return error.DidNotSendAllData;
@@ -435,7 +443,7 @@ pub fn send(sock: std.os.socket_t, data: []const u8) !void {
 
 const SelfModule = @This();
 pub const ConnectResult = struct {
-    sock: std.os.socket_t,
+    sock: std.posix.socket_t,
     setup: x11.ConnectSetup,
     pub fn reader(self: ConnectResult) SocketReader {
         return .{ .context = self.sock };
@@ -447,11 +455,16 @@ pub const ConnectResult = struct {
 
 pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
     const display = x11.getDisplay();
-
-    const sock = x11.connect(display) catch |err| {
-        std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
-        std.os.exit(0xff);
+    const parsed_display = x11.parseDisplay(display) catch |err| {
+        std.log.err("invalid display '{s}': {s}", .{display, @errorName(err)});
+        std.process.exit(0xff);
     };
+
+    const sock = x11.connect(display, parsed_display) catch |err| {
+        std.log.err("failed to connect to display '{s}': {s}", .{display, @errorName(err)});
+        std.process.exit(0xff);
+    };
+    errdefer x11.disconnect(sock);
 
     {
         const len = comptime x11.connect_setup.getLen(0, 0);
@@ -493,7 +506,6 @@ pub fn connect(allocator: std.mem.Allocator) !ConnectResult {
 
     return ConnectResult{ .sock = sock, .setup = connect_setup };
 }
-
-fn readSocket(sock: std.os.socket_t, buffer: []u8) !usize {
-    return std.os.recv(sock, buffer, 0);
+fn readSocket(sock: std.posix.socket_t, buffer: []u8) !usize {
+    return x11.readSock(sock, buffer, 0);
 }

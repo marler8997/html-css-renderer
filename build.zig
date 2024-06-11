@@ -1,73 +1,95 @@
 const std = @import("std");
-const GitRepoStep = @import("GitRepoStep.zig");
 const htmlid = @import("htmlid.zig");
 
-pub fn build(b: *std.build.Builder) !void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
-    const mode = b.standardReleaseOptions();
+    const optimize = b.standardOptimizeOption(.{});
 
-    const id_maps_src = b.pathJoin(&.{ b.build_root, "htmlidmaps.zig"});
+    const id_maps_src = b.pathFromRoot("htmlidmaps.zig");
     const gen_id_maps = b.addWriteFile(id_maps_src, allocIdMapSource(b.allocator));
 
     {
-        const exe = b.addExecutable("lint", "lint.zig");
+        const exe = b.addExecutable(.{
+            .name = "lint",
+            .root_source_file = b.path("lint.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
         exe.step.dependOn(&gen_id_maps.step);
-        exe.setTarget(target);
-        exe.setBuildMode(mode);
-        exe.install();
+        b.installArtifact(exe);
     }
 
     {
-        const exe = b.addExecutable("imagerenderer", "imagerenderer.zig");
+        const exe = b.addExecutable(.{
+            .name = "imagerenderer",
+            .root_source_file = b.path("imagerenderer.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
         exe.step.dependOn(&gen_id_maps.step);
-        exe.setTarget(target);
-        exe.setBuildMode(mode);
-        const install = b.addInstallArtifact(exe);
+        const install = b.addInstallArtifact(exe, .{});
         b.step("image", "build/install imagerenderer").dependOn(&install.step);
     }
 
-    const zigx_repo = GitRepoStep.create(b, .{
-        .url = "https://github.com/marler8997/zigx",
-        .branch = null,
-        .sha = "ae6556f75f0e65082cea7724e46b9ca16da9220b",
-        .fetch_enabled = true,
-    });
+    const zigx_dep = b.dependency("zigx", .{});
+    const zigx_mod = zigx_dep.module("zigx");
+
     {
-        const exe = b.addExecutable("x11renderer", "x11renderer.zig");
+        const exe = b.addExecutable(.{
+            .name = "x11renderer",
+            .root_source_file = b.path("x11renderer.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
         exe.step.dependOn(&gen_id_maps.step);
-        exe.step.dependOn(&zigx_repo.step);
-        exe.addPackagePath("x11", b.pathJoin(&.{ zigx_repo.path, "x.zig" }));
-        exe.setTarget(target);
-        exe.setBuildMode(mode);
-        const install = b.addInstallArtifact(exe);
+        exe.root_module.addImport("x11", zigx_mod);
+        const install = b.addInstallArtifact(exe, .{});
         b.step("x11", "build/install the x11renderer").dependOn(&install.step);
     }
 
     {
-        const exe = b.addSharedLibrary("wasmrenderer", "wasmrenderer.zig", .unversioned);
-        exe.setBuildMode(mode);
-        exe.setTarget(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+        const exe = b.addExecutable(.{
+            .name = "wasmrenderer",
+            .root_source_file = b.path("wasmrenderer.zig"),
+            .target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding }),
+            .optimize = optimize,
+        });
+        exe.entry = .disabled;
+        //exe.export_table = true;
+        exe.root_module.export_symbol_names = &.{
+            "alloc",
+            "release",
+            "onResize",
+            "loadHtml",
+        };
 
-        const make_exe = b.addExecutable("make-renderer-webpage", "make-renderer-webpage.zig");
-        const run = make_exe.run();
+        const make_exe = b.addExecutable(.{
+            .name = "make-renderer-webpage",
+            .root_source_file = b.path("make-renderer-webpage.zig"),
+            .target = b.graph.host,
+        });
+        const run = b.addRunArtifact(make_exe);
         run.addArtifactArg(exe);
-        run.addFileSourceArg(.{ .path = "html-css-renderer.template.html"});
+        run.addFileArg(b.path("html-css-renderer.template.html"));
         run.addArg(b.pathJoin(&.{ b.install_path, "html-css-renderer.html" }));
         b.step("wasm", "build the wasm-based renderer").dependOn(&run.step);
     }
 
     {
-        const exe = b.addExecutable("testrunner", "testrunner.zig");
+        const exe = b.addExecutable(.{
+            .name = "testrunner",
+            .root_source_file = b.path("testrunner.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
         exe.step.dependOn(&gen_id_maps.step);
-        exe.setTarget(target);
-        exe.setBuildMode(mode);
-        const install = b.addInstallArtifact(exe);
+        const install = b.addInstallArtifact(exe, .{});
         const test_step = b.step("test", "run tests");
         test_step.dependOn(&install.step); // make testrunner easily accessible
-        for ([_][]const u8{"hello.html"}) |test_filename| {
-            const run_step = exe.run();
-            run_step.addArg(b.pathJoin(&.{ b.build_root, "test", test_filename}));
-            run_step.stdout_action = .{ .expect_exact = "Success\n" };
+        inline for ([_][]const u8{"hello.html"}) |test_filename| {
+            const run_step = b.addRunArtifact(exe);
+            run_step.addFileArg(b.path("test/" ++  test_filename));
+            run_step.expectStdOutEqual("Success\n");
             test_step.dependOn(&run_step.step);
         }
     }
@@ -101,7 +123,7 @@ fn writeIdEnum(writer: anytype, comptime Enum: type, name: []const u8) !void {
         , .{name, @typeName(Enum)});
     inline for (@typeInfo(Enum).Enum.fields) |field| {
         var lower_buf: [field.name.len]u8 = undefined;
-        for (field.name) |c, i| {
+        for (field.name, 0..) |c, i| {
             lower_buf[i] = std.ascii.toLower(c);
         }
         try writer.print("            .{{ \"{s}\", .{} }},\n", .{lower_buf, std.zig.fmtId(field.name)});

@@ -110,7 +110,7 @@ fn lookupIdIgnoreCase(comptime map_namespace: type, name: []const u8) ?map_names
     // need enough room for the max tag name
     var buf: [20]u8 = undefined;
     if (name.len > buf.len) return null;
-    for (name) |c, i| {
+    for (name, 0..) |c, i| {
         buf[i] = std.ascii.toLower(c);
     }
     return map_namespace.map.get(buf[0 .. name.len]);

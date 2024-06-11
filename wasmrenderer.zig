@@ -160,7 +160,7 @@ const ParseContext = struct {
     name: []const u8,
 };
 fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
-    const context = @intToPtr(*ParseContext, @ptrToInt(context_ptr));
+    const context: *ParseContext = @alignCast(@ptrCast(context_ptr));
     std.log.err("{s}: parse error: {s}", .{context.name, msg});
 }
 
@@ -170,6 +170,9 @@ fn jsLogWrite(context: void, bytes: []const u8) !usize {
     js.logWrite(bytes.ptr, bytes.len);
     return bytes.len;
 }
+pub const std_options: std.Options = .{
+    .logFn = log,
+};
 pub fn log(
     comptime message_level: std.log.Level,
     comptime scope: @Type(.EnumLiteral),

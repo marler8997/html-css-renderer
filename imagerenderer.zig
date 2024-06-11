@@ -17,7 +17,7 @@ pub fn oom(e: error{OutOfMemory}) noreturn {
 
 pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
-    std.os.exit(0xff);
+    std.process.exit(0xff);
 }
 
 var windows_args_arena = if (builtin.os.tag == .windows)
@@ -27,11 +27,10 @@ pub fn cmdlineArgs() [][*:0]u8 {
     if (builtin.os.tag == .windows) {
         const slices = std.process.argsAlloc(windows_args_arena.allocator()) catch |err| switch (err) {
             error.OutOfMemory => oom(error.OutOfMemory),
-            error.InvalidCmdLine => @panic("InvalidCmdLine"),
             error.Overflow => @panic("Overflow while parsing command line"),
         };
         const args = windows_args_arena.allocator().alloc([*:0]u8, slices.len - 1) catch |e| oom(e);
-        for (slices[1..]) |slice, i| {
+        for (slices[1..], 0..) |slice, i| {
             args[i] = slice.ptr;
         }
         return args;
@@ -43,13 +42,13 @@ fn getCmdOpt(args: [][*:0]u8, i: *usize) []u8 {
     i.* += 1;
     if (i.* == args.len) {
         std.log.err("cmdline option '{s}' requires an argument", .{args[i.* - 1]});
-        std.os.exit(0xff);
+        std.process.exit(0xff);
     }
     return std.mem.span(args[i.*]);
 }
 
 pub fn main() !u8 {
-    var viewport_width: u32 = 600;
+    const viewport_width: u32 = 600;
     var viewport_height: u32 = 600;
 
     const args = blk: {
@@ -107,16 +106,16 @@ pub fn main() !u8 {
         fatal("layout failed, error={s}", .{@errorName(err)});
     alext.unmanaged.finalize(layout.LayoutNode, &layout_nodes, global_arena.allocator());
 
-    var render_ctx = RenderCtx {
+    const render_ctx = RenderCtx {
         .viewport_width = viewport_width,
         .viewport_height = viewport_height,
         .stride = viewport_width * bytes_per_pixel,
         .image = try global_arena.allocator().alloc(
             u8,
-            @intCast(usize, viewport_width) * @intCast(usize, viewport_height) * 3,
+            @as(usize, viewport_width) * @as(usize, viewport_height) * 3,
         ),
     };
-    std.mem.set(u8, render_ctx.image, 0xff);
+    @memset(render_ctx.image, 0xff);
     try render.render(content, dom_nodes.items, layout_nodes.items, RenderCtx, &onRender, render_ctx);
 
     var out_file = try std.fs.cwd().createFile("render.ppm", .{});
@@ -133,7 +132,7 @@ const ParseContext = struct {
 };
 
 fn onParseError(context_ptr: ?*anyopaque, msg: []const u8) void {
-    const context = @intToPtr(*ParseContext, @ptrToInt(context_ptr));
+    const context: *ParseContext = @alignCast(@ptrCast(context_ptr));
     std.io.getStdErr().writer().print("{s}: parse error: {s}\n", .{context.filename, msg}) catch |err|
         std.debug.panic("failed to print parse error with {s}", .{@errorName(err)});
 }
@@ -187,13 +186,13 @@ fn onRender(ctx: RenderCtx, op: render.Op) !void {
 }
 
 fn drawPixel(img: []u8, color: u32) void {
-    img[0] = @intCast(u8, 0xff & (color >> 16));
-    img[1] = @intCast(u8, 0xff & (color >>  8));
-    img[2] = @intCast(u8, 0xff & (color >>  0));
+    img[0] = @as(u8, @intCast(0xff & (color >> 16)));
+    img[1] = @as(u8, @intCast(0xff & (color >>  8)));
+    img[2] = @as(u8, @intCast(0xff & (color >>  0)));
 }
 fn drawRow(img: []u8, width: u32, color: u32) void {
     var offset: usize = 0;
-    var limit: usize = width * bytes_per_pixel;
+    const limit: usize = width * bytes_per_pixel;
     while (offset < limit) : (offset += bytes_per_pixel) {
         drawPixel(img[offset..], color);
     }
@@ -212,7 +211,7 @@ fn drawText(
     text: []const u8,
 ) void {
     //std.log.info("drawText at {}, {} size={} text='{s}'", .{x, y, font_size, text});
-    var scale: f64 = @intToFloat(f64, font_size);
+    const scale: f64 = @floatFromInt(font_size);
 
     var pixels_array_list = std.ArrayListUnmanaged(u8){ };
 
@@ -234,11 +233,11 @@ fn drawText(
             gid,
         ) catch |err| std.debug.panic("gmetrics for char {} failed with {s}", .{c, @errorName(err)});
         const glyph_size = layout.XY(u32) {
-            .x = std.mem.alignForwardGeneric(u32, @intCast(u32, gmetrics.min_width), 4),
-            .y = @intCast(u32, gmetrics.min_height),
+            .x = std.mem.alignForward(u32, @intCast(gmetrics.min_width), 4),
+            .y = @intCast(gmetrics.min_height),
         };
         //std.log.info("  c={} size={}x{} adv={d:.0}", .{c, glyph_size.x, glyph_size.y, @ceil(gmetrics.advance_width)});
-        const pixel_len = @intCast(usize, glyph_size.x) * @intCast(usize, glyph_size.y);
+        const pixel_len = @as(usize, glyph_size.x) * @as(usize, glyph_size.y);
         pixels_array_list.ensureTotalCapacity(allocator, pixel_len) catch |e| oom(e);
         const pixels = pixels_array_list.items.ptr[0 .. pixel_len];
         schrift.render(
@@ -249,7 +248,7 @@ fn drawText(
             .{ .x = scale, .y = scale },
             .{ .x = 0, .y = 0 },
             pixels,
-            .{ .x = @intCast(i32, glyph_size.x), .y = @intCast(i32, glyph_size.y) },
+            .{ .x = @intCast(glyph_size.x), .y = @intCast(glyph_size.y) },
             gid,
         ) catch |err| std.debug.panic("render for char {} failed with {s}", .{c, @errorName(err)});
 
@@ -257,14 +256,14 @@ fn drawText(
             var glyph_y: usize = 0;
             while (glyph_y < glyph_size.y) : (glyph_y += 1) {
                 const row_offset_i32 = (
-                    @intCast(i32, y) +
-                    @floatToInt(i32, @ceil(lmetrics.ascender)) +
+                    @as(i32, @intCast(y)) +
+                    @as(i32, @intFromFloat(@ceil(lmetrics.ascender))) +
                     gmetrics.y_offset +
-                    @intCast(i32, glyph_y)
-                ) * @intCast(i32, img_stride);
+                    @as(i32, @intCast(glyph_y))
+                ) * @as(i32, @intCast(img_stride));
                 if (row_offset_i32 < 0) continue;
 
-                const row_offset = @intCast(usize, row_offset_i32);
+                const row_offset: usize = @intCast(row_offset_i32);
 
                 var glyph_x: usize = 0;
                 while (glyph_x < glyph_size.x) : (glyph_x += 1) {
@@ -272,14 +271,14 @@ fn drawText(
                     if (image_pos + bytes_per_pixel <= img.len) {
                         const grayscale = 255 - pixels[glyph_y * glyph_size.x + glyph_x];
                         const color =
-                            (@intCast(u32, grayscale) << 16) |
-                            (@intCast(u32, grayscale) <<  8) |
-                            (@intCast(u32, grayscale) <<  0) ;
+                            (@as(u32, grayscale) << 16) |
+                            (@as(u32, grayscale) <<  8) |
+                            (@as(u32, grayscale) <<  0) ;
                         drawPixel(img[image_pos..], color);
                     }
                 }
             }
         }
-        next_x += @floatToInt(u32, @ceil(gmetrics.advance_width));
+        next_x += @intFromFloat(@ceil(gmetrics.advance_width));
     }
 }
