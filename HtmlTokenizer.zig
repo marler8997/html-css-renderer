@@ -139,19 +139,32 @@ fn consume(self: *HtmlTokenizer) !void {
     }
     const len = try std.unicode.utf8CodepointSequenceLength(self.ptr[0]);
     if (@intFromPtr(self.ptr) + len > @intFromPtr(self.limit))
-        return error.Utf8TruncatedInput;
+        return error.Utf8ExpectedContinuation;
     self.current_input_character = .{ .len = len, .val = try std.unicode.utf8Decode(self.ptr[0 .. len]) };
     self.ptr += len;
 }
 
-pub fn next(self: *HtmlTokenizer) !?Token {
+// why isn't this pub in std.unicode?
+const Utf8DecodeError = error {
+    Utf8ExpectedContinuation,
+    Utf8OverlongEncoding,
+    Utf8EncodesSurrogateHalf,
+    Utf8CodepointTooLarge,
+};
+
+pub fn next(self: *HtmlTokenizer) Utf8DecodeError!?Token {
     //std.log.info("next: offset={}", .{@intFromPtr(self.ptr) - @intFromPtr(self.start)});
     if (self.deferred_token) |t| {
         const token_copy = t;
         self.deferred_token = null;
         return token_copy;
     }
-    const result = (try self.next2()) orelse return null;
+    const result = (self.next2() catch |err| switch (err) {
+        // Why does std.unicode have both these errors?
+        error.CodepointTooLarge => return error.Utf8CodepointTooLarge,
+        error.NotImpl => @panic("not implemented"),
+        else => |e| return e,
+    }) orelse return null;
     if (result.deferred) |d| {
         self.deferred_token = d;
     }
